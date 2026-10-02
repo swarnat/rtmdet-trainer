@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools==75.6.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "od-api"
+version = "0.1.0"
+description = "Object detection API: inference (OpenVINO), annotation, training and model management"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.32.1",
+    "python-multipart==0.0.20",
+    "pydantic==2.10.3",
+    "pydantic-settings==2.6.1",
+    "sqlalchemy==2.0.36",
+    "alembic==1.14.0",
+    "psycopg[binary]==3.2.3",
+    # boto3 >= 1.36 sends new default integrity checksums that older S3-compatible stores reject
+    "boto3==1.35.99",
+    "redis==5.2.1",
+    "rq==1.16.2",
+    "numpy==1.26.4",
+    "opencv-python-headless==4.10.0.84",
+    "openvino==2024.6.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest==8.3.4",
+    "httpx==0.28.1",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["../tests/backend"]

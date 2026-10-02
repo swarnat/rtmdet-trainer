@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools==75.6.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "odcore"
+version = "0.1.0"
+description = "Shared code (classes, geometry, ORM models, storage) for API and trainer"
+requires-python = ">=3.10"
+# Concrete versions are pinned by the consuming services (backend/trainer).
+dependencies = [
+    "numpy",
+    "opencv-python-headless",
+    "sqlalchemy",
+    "boto3",
+]
+
+[tool.setuptools.packages.find]
+include = ["odcore*"]

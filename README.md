@@ -1,0 +1,271 @@
+# Object Detection Training & Inference
+
+Lokal betreibbare Webanwendung zur Erkennung von **Personen**, **Fahrrädern** und **Fahrzeugen** in 16:9-Kamerabildern, inklusive Annotation, manuell gestartetem Nachtraining (RTMDet-S / MMDetection) und Modellverwaltung mit Production/Candidate/Archiv-Versionen. Die Inferenz läuft mit OpenVINO auf der CPU, das Training in einem separaten Container (GPU optional).
+
+```
+            ┌──────────────┐  /api  ┌──────────────────────────┐        ┌────────────┐
+ Browser ──►│  frontend    │───────►│  api (FastAPI)           │◄──SQL─►│  postgres  │
+            │  Vue/Quasar  │        │  OpenVINO-Inferenz (CPU) │        └────────────┘
+            │  nginx       │        │  REST, OpenAPI           │──S3───►┌────────────┐
+            └──────────────┘        └──────────┬───────────────┘        │  garage    │
+                                               │ RQ-Job                 │  (S3)      │
+                                         ┌─────▼─────┐                  └─────▲──────┘
+                                         │  redis    │                        │
+                                         └─────┬─────┘                        │
+                                     ┌─────────▼──────────────────────┐       │
+                                     │ trainer (PyTorch, MMDetection) │───────┘
+                                     │ RTMDet-S, ONNX/OpenVINO-Export │
+                                     └────────────────────────────────┘
+```
+
+| Dienst        | Aufgabe |
+|---------------|---------|
+| `frontend`    | Vue 3 + Quasar + vue-konva, ausgeliefert über nginx, Proxy `/api` → `api` |
+| `api`         | FastAPI: `/api/v1/detect`, Bilder, Annotationen, Training, Modelle, Settings; OpenVINO-Inferenz |
+| `trainer`     | RQ-Worker: Dataset-Snapshot, RTMDet-S-Training, Evaluation, ONNX/OpenVINO-Export, Registrierung |
+| `postgres`    | Metadaten (Images, Annotations, TrainingRuns, ModelVersions, Settings) |
+| `redis`       | Job-Queue (RQ) |
+| `garage`      | S3-Storage für Bilder, Dataset-Snapshots, Modelle |
+| `garage-init` | einmalige, idempotente Initialisierung (Layout, S3-Key, Buckets) |
+
+## Schnellstart
+
+Voraussetzungen: Docker mit Compose v2. Für GPU-Training zusätzlich NVIDIA-Treiber und das NVIDIA Container Toolkit. Ohne GPU läuft das Training auf der CPU, aber sehr langsam.
+
+```bash
+./scripts/generate-env.sh      # erzeugt .env mit zufälligen Secrets, erkennt die NVIDIA-Runtime
+docker compose up -d           # baut und startet alles
+./scripts/wait-for-services.sh # wartet, bis die API gesund ist
+```
+
+* UI: <http://localhost:8080> (`FRONTEND_PORT`)
+* OpenAPI/Swagger: <http://localhost:8080/api/v1/docs> (auch direkt: <http://localhost:8000/api/v1/docs>, `API_PORT`)
+
+Beim ersten Start lädt der Trainer den COCO-pretrained RTMDet-S-Checkpoint, legt ihn in S3 ab (`models/base/…`) und exportiert ihn als `model-0001`. Dabei werden die COCO-Klassen per Mapping auf die eigenen drei Klassen abgebildet (siehe unten). Da noch kein Production-Modell existiert, wird `model-0001` Production. `/detect` funktioniert also sofort, ohne eigene Trainingsdaten. Abschalten lässt sich das mit `BOOTSTRAP_ON_START=false`.
+
+Alle Daten liegen in Docker-Volumes (`postgres-data`, `garage-meta`, `garage-data`, `redis-data`, `model-cache`) und überleben Neustarts und `docker compose down`. `docker compose down -v` löscht alles.
+
+### Konfiguration
+
+Sämtliche Zugangsdaten kommen aus der `.env` (Vorlage: `.env.example`). Im Quellcode stehen keine Secrets. Garage liest `rpc_secret` und `admin_token` aus `GARAGE_RPC_SECRET` und `GARAGE_ADMIN_TOKEN`. Der S3-Key (`S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`, Format `GK` + 24 Hex bzw. 64 Hex) wird von `garage-init` importiert.
+
+GPU-Training wird über `COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml` in der `.env` aktiviert. Ohne GPU diese Zeile auf `docker-compose.yml` setzen.
+
+Fachliche Einstellungen (Standardauflösung, angebotene Auflösungen, Confidence, NMS-IoU, Validierungsanteil, COCO-Klassen-Mapping) liegen in der Tabelle `settings` und sind in der UI unter **Einstellungen** änderbar. Sie wirken ohne Neustart.
+
+## Bedienung
+
+### Annotation (`/annotate`)
+
+* Links: Bildliste mit Filter (alle / offen / fertig / negativ), Upload per Button oder Drag & Drop (JPEG/PNG/WebP/BMP, Duplikate werden per SHA-256 erkannt).
+* Mitte: Bild mit Bounding Boxes (Konva). **Ziehen auf freier Fläche** erzeugt eine Box mit der aktiven Klasse. Eine Box **anklicken** wählt sie aus, **ziehen** verschiebt sie, die **Anfasser** skalieren sie. Mausrad zoomt, Leertaste, mittlere oder rechte Maustaste + Ziehen verschiebt die Ansicht.
+* Rechts: Liste der Boxen, Modelltest, Bildaktionen.
+* **Speichern** markiert das Bild als `labeled`. Ein gespeichertes Bild **ohne Boxen** ist ein gültiges **negatives Trainingsbild**. Ein noch nicht bearbeitetes Bild bleibt `unlabeled` und kommt nicht ins Training.
+
+| Taste | Funktion |
+|-------|----------|
+| `1` / `2` / `3` | Klasse Person / Fahrrad / Fahrzeug (für neue Boxen und die ausgewählte Box) |
+| `Entf` / `Backspace` | ausgewählte Box löschen |
+| `Strg+S` | speichern |
+| `Strg+Z` | rückgängig |
+| `Esc` | Auswahl aufheben |
+| `T` | Modell testen |
+| `H` | Predictions ein-/ausblenden |
+| `Enter` / Doppelklick | ausgewählte Prediction übernehmen |
+| `Umschalt+A` | alle Predictions übernehmen |
+| `Bild↑` / `Bild↓` | vorheriges / nächstes Bild |
+
+**Modell testen:** Production-Modell, neuesten Candidate oder eine beliebige Version wählen, dazu Eingangsauflösung und Confidence. Die API führt eine normale Detection auf dem gespeicherten Bild aus. Predictions erscheinen gestrichelt, kursiv, mit ⚡ und Confidence und sind so klar von manuellen Annotationen zu unterscheiden. „Prediction übernehmen“ bzw. „Alle übernehmen“ macht daraus normale, editierbare Annotationen (Quelle `prediction`).
+
+### Training (`/training`)
+
+Dialog mit Base Model (RTMDet-S COCO oder eine eigene Version zum Weitertrainieren), Input Resolution, Epochs, Batch Size, optionaler Learning Rate und Anzahl Loader-Worker. Ein Lauf durchläuft `queued → running → completed | failed`. Die UI zeigt Fortschritt (Epoche, Loss, ETA), die Validierungs-mAP je Epoche und das Live-Log. Läufe lassen sich abbrechen. Ein Training wird **nie automatisch Production**, das Ergebnis ist immer eine neue **Candidate**-Version.
+
+### Modelle (`/models`)
+
+Liste aller unveränderlichen Versionen (`model-0001`, `model-0002`, …) mit Status `candidate | production | archived`, Metriken und Artefakt-Downloads (PyTorch-Checkpoint, ONNX, OpenVINO, Config). **Als Production aktivieren** wirkt sofort für die nächste `/detect`-Anfrage, ein Neustart ist nicht nötig. Die vorherige Production-Version wird archiviert und kann jederzeit wieder aktiviert werden (Rollback). In der Datenbank stellt ein partieller Unique-Index sicher, dass es höchstens ein Production-Modell gibt.
+
+## API
+
+Vollständige Dokumentation: `/api/v1/docs` (Swagger UI) bzw. `/api/v1/openapi.json`.
+
+```bash
+curl -s -X POST http://localhost:8080/api/v1/detect \
+  -F image=@kamera.jpg \
+  -F confidence=0.3 \
+  -F input_size=1536x864 \
+  -F model=production            # optional: production | candidate | model-0003
+```
+
+```json
+{
+  "image": { "width": 1920, "height": 1080 },
+  "model": { "version": "model-0003", "status": "production", "input_width": 1536, "input_height": 864 },
+  "inference_ms": 312.4,
+  "detections": [
+    { "class": "person", "confidence": 0.972, "bbox": { "x1": 452, "y1": 181, "x2": 611, "y2": 793 } }
+  ]
+}
+```
+
+* Das Bild wird **nicht gespeichert**.
+* Boxen sind immer Pixelkoordinaten des **Originalbildes**, unabhängig von der Modellauflösung.
+* Defaults: aktives Production-Modell, `1536x864`, Confidence `0.25` (alles über die Settings änderbar).
+* `inference_ms` umfasst Letterboxing, Inferenz und Post-Processing.
+
+Python:
+
+```python
+import httpx
+with open("kamera.jpg", "rb") as f:
+    r = httpx.post("http://localhost:8080/api/v1/detect", files={"image": f}, data={"confidence": "0.3"})
+for d in r.json()["detections"]:
+    print(d["class"], d["confidence"], d["bbox"])
+```
+
+Weitere Endpunkte (Auszug):
+
+| Methode & Pfad | Zweck |
+|----------------|-------|
+| `POST /api/v1/images` | Trainingsbilder hochladen (multipart, mehrere `files`) |
+| `GET /api/v1/images?status=unlabeled&negative=false` | Bilder auflisten |
+| `GET/PUT /api/v1/images/{id}/annotations` | Annotationen lesen / komplett ersetzen (`[]` = negatives Bild) |
+| `POST /api/v1/images/{id}/detect` | Modelltest auf gespeichertem Bild |
+| `POST /api/v1/training/runs` | Training starten |
+| `GET /api/v1/training/runs/{id}` / `…/log` / `POST …/cancel` | Status, Log, Abbruch |
+| `GET /api/v1/models`, `POST /api/v1/models/{version}/activate` | Modelle, Aktivierung/Rollback |
+| `POST /api/v1/models/bootstrap` | COCO-Basismodell (neu) importieren |
+| `GET/PUT /api/v1/settings` | Einstellungen |
+
+## Funktionsweise im Detail
+
+### Klassen
+
+Eigene Klassen: `0 person`, `1 bicycle`, `2 vehicle`. Das Standard-Mapping vom COCO-Basismodell (Setting `coco_class_mapping`) ist:
+
+| eigene Klasse | COCO-Klassen |
+|---------------|--------------|
+| person  | person |
+| bicycle | bicycle |
+| vehicle | car, motorcycle, bus, truck |
+
+Züge und Schienenfahrzeuge (`train`) werden bewusst **nicht** als `vehicle` behandelt. Das Mapping wird verwendet
+
+1. für das importierte COCO-Modell (Score einer eigenen Klasse = Maximum der Scores der zugeordneten COCO-Klassen, direkt im exportierten Graphen), und
+2. zur Initialisierung des Klassifikationskopfs beim Training ab COCO. Die Gewichte der eigenen Klasse sind der Mittelwert der zugeordneten COCO-Klassen statt einer Zufallsinitialisierung, das hilft bei kleinen Datensätzen.
+
+Nach einer Mapping-Änderung unter „Modelle“ das COCO-Basismodell neu importieren (oder `python3 scripts/bootstrap-model.py --url http://localhost:8080`).
+
+### Bildauflösung & Letterboxing
+
+Das Originalbild wird mit erhaltenem Seitenverhältnis auf die Modellauflösung skaliert (`scale = min(W/w, H/h)`), oben links platziert und rechts/unten mit dem Wert 114 aufgefüllt. Das ist dieselbe Konvention wie MMDetections `Resize(keep_ratio=True)` + `Pad` im Training. 16:9-Bilder auf `1536x864` brauchen kein Padding. Modellauflösungen müssen Vielfache von 32 sein. Die Rückrechnung der Boxen geschieht durch Division durch `scale` mit anschließendem Clipping auf das Originalbild (`common/odcore/geometry.py`). Die Annotationen werden immer in Originalpixeln gespeichert. Hinweis: Hochformatbilder werden bei der Inferenz korrekt behandelt, im Training (MMDetection-`Resize`) sind aber Querformatbilder vorgesehen.
+
+### Inferenz (API)
+
+Der ONNX-Export enthält Normalisierung, Prior-Erzeugung und Box-Dekodierung und hat dynamische H/W. Ausgaben sind `boxes [1,N,4]` (xyxy in Input-Pixeln) und `scores [1,N,C]`. Die API lädt das OpenVINO-IR einer Version einmalig aus S3, setzt per `reshape` einen **statischen Input-Shape** (z. B. `[1, 3, 864, 1536]`), kompiliert und cacht das Ergebnis pro *(Version, Auflösung)* (LRU, `COMPILED_MODEL_CACHE_SIZE`, zusätzlich OpenVINO-Blob-Cache im Volume `model-cache`). Die klassenweise NMS (IoU 0.6) läuft in numpy. Gemessen: ca. 310 ms reine Inferenz bei 1536×864 auf einem i9-12900H unter WSL2, ca. 9 ms Vorverarbeitung.
+
+Beim Export wird das OpenVINO-Modell gegen PyTorch verifiziert (max. Score-Abweichung ~1e-5, Box-Abweichung < 0.05 px). Bei Abweichungen schlägt das Training fehl, statt ein fehlerhaftes Modell zu registrieren.
+
+### Dataset-Snapshots
+
+Bei jedem Training erzeugt der Trainer aus PostgreSQL und S3 einen Snapshot unter `s3://datasets/<training-run-id>/`:
+
+```
+manifest.json            Bild-IDs, SHA-256, Split, Quell-Keys, Statistik
+annotations/train.json   COCO Detection Format (Kategorien 1=person, 2=bicycle, 3=vehicle)
+annotations/val.json
+images/<sha256>.<ext>    Kopien der Bilder (bleiben erhalten, auch wenn Bilder später gelöscht werden)
+```
+
+* Es werden alle Bilder mit Status `labeled` verwendet, **inklusive negativer Bilder ohne Boxen** (in der Trainings-Pipeline auch über `filter_empty_gt=False`, `allow_negative_crop=True` usw.).
+* Der Split (`train`/`validation`, Default 85/15) wird beim ersten Labeln deterministisch aus dem Bild-Hash bestimmt und am Bild **persistiert**. Er wird nie neu gewürfelt, auch nicht bei geändertem Validierungsanteil. Manuelles Umsetzen ist per `PATCH /api/v1/images/{id}` möglich.
+* Der Snapshot entsteht beim **Start** des Laufs (nicht beim Einreihen).
+
+### Training
+
+* Modell: RTMDet-S (`rtmdet_s_8xb32-300e_coco.py` aus MMDetection 3.3.0), initialisiert mit dem COCO-Checkpoint, `num_classes=3`, BN statt SyncBN (Single-GPU).
+* Pipeline wie RTMDet (CachedMosaic, RandomResize, RandomCrop, HSV, Flip, CachedMixUp), angepasst auf die gewählte Auflösung. In den letzten ~15 % der Epochen läuft sie ohne Mosaic/MixUp (`PipelineSwitchHook`), dazu EMA.
+* Optimizer AdamW. Ohne Angabe gilt `LR = 0.00025 × Batch/4` (Fine-Tuning) mit linearem Warm-up und Cosine-Decay. Auf der GPU wird mit AMP trainiert.
+* Validierung jede Epoche (bis 50 Epochen). Exportiert wird der beste Checkpoint nach COCO-mAP (EMA-Gewichte).
+* Jeder Job läuft in einem eigenen Prozess. Das gibt GPU-Speicher zuverlässig frei, isoliert Abstürze und ermöglicht den Abbruch.
+* Gespeichert pro Version unter `s3://models/<version>/`: `checkpoint.pth`, `model.onnx`, `openvino/model.{xml,bin}`, `config.py`, `metrics.json`. Das vollständige Log liegt unter `training-runs/<id>/train.log`.
+
+### Metriken
+
+Ausgewertet wird das **exportierte OpenVINO-Modell** auf dem Validierungssplit, mit exakt der Vor- und Nachverarbeitung der API:
+
+* **mAP50, mAP50-95** (COCO-Protokoll via pycocotools): gesamt, pro Klasse und pro Boxgröße (klein < 32², mittel < 96², groß; Fläche in Originalpixeln), dazu mAP für kleine Objekte pro Klasse.
+* **Precision / Recall** bei Confidence ≥ `eval_confidence` (Default 0.25) und IoU 0.5 mit greedy 1:1-Matching: gesamt, pro Klasse, pro Boxgröße, inklusive TP/FP/FN.
+* Zusätzlich der Verlauf der MMDetection-Validierung je Epoche.
+
+## Datenmodell
+
+| Tabelle | Wichtigste Felder |
+|---------|-------------------|
+| `images` | `s3_object_key`, `sha256` (unique), `width`, `height`, `annotation_status` (`unlabeled`/`labeled`), `dataset_split`, `created_at`, `updated_at` |
+| `annotations` | `image_id`, `class_name`, `x1`, `y1`, `x2`, `y2` (Originalpixel), `source` (`manual`/`prediction`) |
+| `training_runs` | `status`, `base_model_id`, `dataset_snapshot`, `input_width/height`, `epochs`, `batch_size`, `learning_rate`, `started_at`, `finished_at`, `progress_json`, `metrics_json`, `log`, `error` |
+| `model_versions` | `version`, `status`, `kind`, `checkpoint_key`, `onnx_key`, `openvino_key`, `config_key`, `input_width/height`, `class_names`, `metrics_json`, `dataset_snapshot`, `training_run_id`, `created_at`, `activated_at` |
+| `settings` | `key`, `value` (JSON) |
+
+Migrationen: Alembic (`backend/alembic`), werden beim Start der API automatisch ausgeführt. Die ORM-Modelle liegen im gemeinsamen Paket `common/odcore`, das API und Trainer verwenden.
+
+## Projektstruktur
+
+```
+docker-compose.yml, docker-compose.gpu.yml, .env.example
+common/odcore/        gemeinsamer Code: Klassen, Geometrie/Letterboxing, ORM, S3, OpenVINO-Detector
+backend/              FastAPI (app/api/routes, core, db, schemas, services), Alembic, requirements.lock
+trainer/              RQ-Worker, Snapshot, Training, Evaluation, ONNX/OpenVINO-Export, rtmdet/ Config
+frontend/             Vue 3 + Vite + Quasar + vue-konva
+infrastructure/garage garage.toml, idempotentes init.sh (Admin-API)
+scripts/              generate-env.sh, wait-for-services.sh, bootstrap-model.py
+tests/                backend/ (Geometrie, Annotation, Detection-API, Modelle), trainer/, integration/
+```
+
+## Tests
+
+```bash
+# Backend: Box-Konvertierung, Letterboxing, Detection-API mit echtem OpenVINO-Modell, Modellwechsel
+docker compose run --rm --no-deps api python -m pytest -q
+
+# Trainer: COCO-Snapshot inkl. Negativbilder, Precision/Recall, MMDetection-Config
+docker compose run --rm --no-deps trainer python -m pytest -q /srv/tests/trainer
+
+# Integration gegen den laufenden Stack
+docker compose run --rm --no-deps -e OD_BASE_URL=http://frontend api python -m pytest -q /srv/tests/integration
+```
+
+## Entwicklung
+
+* Frontend mit Hot Reload: `cd frontend && npm ci && VITE_API_PROXY=http://localhost:8000 npm run dev`
+* Python-Abhängigkeiten: direkte Abhängigkeiten in `pyproject.toml` (exakt gepinnt), vollständiger Satz in `requirements.lock` (wird in den Dockerfiles als Constraints-Datei verwendet). Node: `package.json` (exakt) + `package-lock.json`.
+* Versionen: Python 3.11 (API), Python 3.10 + PyTorch 2.1.2/CUDA 12.1 + MMCV 2.1.0 + MMDetection 3.3.0 + MMEngine 0.10.5 (Trainer), OpenVINO 2024.6 (beide), Vue 3.5, Quasar 2.17, Vite 6, Konva 9.
+
+## Lizenzen & Herkunft
+
+> Keine Rechtsberatung. Vor einem kommerziellen Einsatz die Lizenzen selbst prüfen.
+
+### Code
+
+* **Dieses Projekt:** Für den projekteigenen Code ist noch keine Lizenz festgelegt (keine `LICENSE`-Datei). Das bestimmt der Rechteinhaber.
+* **Wesentliche Abhängigkeiten:** MMDetection, MMEngine, MMCV (Apache-2.0), PyTorch (BSD-3-Clause), OpenVINO (Apache-2.0), ONNX (Apache-2.0), FastAPI/Starlette/Pydantic/SQLAlchemy (MIT), Alembic (MIT), RQ (BSD-2-Clause), pycocotools (BSD-2-Clause), OpenCV (Apache-2.0), Vue/Quasar/Pinia/Vue Router/Vite/Konva/vue-konva (MIT).
+* **Dienste (unverändert, als eigene Container):** Garage (AGPL-3.0), PostgreSQL (PostgreSQL License), Redis 7.2 (BSD-3-Clause; bewusst 7.2, da Redis ab 7.4 unter RSALv2/SSPLv1 steht).
+
+### Modell & Trainingsdaten (getrennt vom Code zu betrachten)
+
+* **Base-Checkpoint:** `rtmdet_s_8xb32-300e_coco_20220905_161602-387a891e.pth` aus dem MMDetection-v3-Model-Zoo von OpenMMLab
+  (<https://download.openmmlab.com/mmdetection/v3.0/rtmdet/rtmdet_s_8xb32-300e_coco/rtmdet_s_8xb32-300e_coco_20220905_161602-387a891e.pth>,
+  SHA-256 `387a891e157cf0ab57d76b3ffc17bf77247089d672532427930b3140f9e789d6`, wird beim Download geprüft). OpenMMLab veröffentlicht die Gewichte im MMDetection-Repository, das unter Apache-2.0 steht. Eine separate Lizenz nur für die Gewichte ist dort nicht ausgewiesen.
+* **Trainingsdaten des Checkpoints:** COCO 2017 (train). Die COCO-Annotationen stehen unter CC BY 4.0. Die Bilder stammen von Flickr, für sie gelten die jeweiligen Flickr-Lizenzen bzw. Nutzungsbedingungen. Der CSPNeXt-Backbone wurde von OpenMMLab zuvor auf ImageNet-1k vortrainiert, dessen Nutzungsbedingungen auf nicht-kommerzielle Forschung ausgelegt sind. Ob und wie sich das auf abgeleitete Gewichte auswirkt, ist rechtlich nicht abschließend geklärt.
+* **Eigene Modelle** (`model-0002`, …) sind von diesem Checkpoint abgeleitet und zusätzlich mit den eigenen Kamerabildern trainiert. Für diese Bilder gelten die Rechte bzw. Datenschutzanforderungen des Betreibers (Personen auf Kamerabildern sind personenbezogene Daten).
+* Der COCO-Checkpoint wird zur Laufzeit heruntergeladen (`BASE_CHECKPOINT_URL`) und im Bucket `models/base/` abgelegt. Er ist nicht Teil des Repositorys.
+
+## Troubleshooting
+
+* `docker compose logs -f trainer` zeigt Training und Bootstrap, `docker compose logs -f api` die API.
+* **„no production model is active“ (503):** Der Bootstrap lief noch nicht oder ist fehlgeschlagen. Unter „Modelle“ → „COCO-Basismodell importieren“ und anschließend aktivieren.
+* **CUDA out of memory:** Batch Size oder Auflösung reduzieren. RTMDet-S braucht bei 1536×864 und Batch 4 etwa 3,3 GB VRAM.
+* **Dataloader-Fehler wegen Shared Memory:** `TRAINER_SHM_SIZE` erhöhen oder Loader-Worker reduzieren.
+* **Port belegt:** `FRONTEND_PORT` / `API_PORT` in der `.env` anpassen.
+* Garage-Init erneut ausführen (idempotent): `docker compose run --rm garage-init`.

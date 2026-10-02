@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools==75.6.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "od-trainer"
+version = "0.1.0"
+description = "Training worker: RTMDet-S (MMDetection) training, evaluation, ONNX/OpenVINO export"
+requires-python = ">=3.10,<3.12"
+# torch 2.1.2 (CUDA 12.1) comes from the base image, mmcv 2.1.0 from the OpenMMLab wheel index
+# (see Dockerfile). Everything else is pinned here.
+dependencies = [
+    "mmengine==0.10.5",
+    "mmdet==3.3.0",
+    "numpy==1.26.4",
+    "opencv-python-headless==4.10.0.84",
+    "pycocotools==2.0.8",
+    "onnx==1.16.2",
+    "openvino==2024.6.0",
+    "sqlalchemy==2.0.36",
+    "psycopg[binary]==3.2.3",
+    "boto3==1.35.99",
+    "redis==5.2.1",
+    "rq==1.16.2",
+]
+
+[project.optional-dependencies]
+test = ["pytest==8.3.4"]
+
+[tool.setuptools.packages.find]
+include = ["trainer*"]

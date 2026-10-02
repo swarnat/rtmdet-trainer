@@ -1,0 +1,14 @@
+html, body, #app { height: 100%; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.log-view {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: #1e1e1e;
+  color: #ddd;
+  padding: 8px 12px;
+  border-radius: 4px;
+  overflow: auto;
+}
+.class-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }

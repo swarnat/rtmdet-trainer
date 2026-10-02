@@ -1,0 +1,11 @@
+# Optional override: train on NVIDIA GPUs (requires the NVIDIA Container Toolkit).
+# Enabled via COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml in .env
+services:
+  trainer:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
