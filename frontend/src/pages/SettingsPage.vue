@@ -38,22 +38,8 @@
           />
           <q-input v-model.number="form.eval_confidence" type="number" step="0.05" outlined dense label="Confidence für Precision/Recall" class="col-6 col-sm-4" />
         </div>
-        <div class="text-subtitle2">Klassen-Mapping COCO → eigene Klassen</div>
         <div class="text-caption text-grey-7">
-          Verwendet für das importierte COCO-Basismodell und zur Initialisierung des Klassifikationskopfs beim Training ab COCO. Nach einer Änderung
-          unter „Modelle“ das COCO-Basismodell neu importieren. Züge sind bewusst nicht als Fahrzeug zugeordnet.
-        </div>
-        <div v-for="c in CLASSES" :key="c.name" class="row items-center q-col-gutter-sm">
-          <div class="col-12 col-sm-2"><span class="class-dot" :style="{ background: c.color }" />{{ c.label }}</div>
-          <q-select
-            v-model="form.coco_class_mapping[c.name]"
-            :options="COCO_CLASSES"
-            multiple
-            use-chips
-            outlined
-            dense
-            class="col-12 col-sm-10"
-          />
+          Klassen und ihr COCO-Mapping werden unter <router-link to="/classes">Klassen</router-link> verwaltet.
         </div>
       </q-card-section>
       <q-card-actions align="right">
@@ -67,8 +53,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useQuasar } from 'quasar'
-import { api, CLASSES, errorMessage, type Settings } from '@/services/api'
-import { COCO_CLASSES } from '@/constants'
+import { api, errorMessage, type Settings } from '@/services/api'
 import { useModelsStore } from '@/stores/models'
 
 const $q = useQuasar()

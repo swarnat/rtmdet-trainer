@@ -1,9 +1,10 @@
 """Import the COCO-pretrained RTMDet-S as a model version (no training).
 
-The 80 COCO classes are merged into person/bicycle/vehicle inside the exported
-graph according to the "coco_class_mapping" setting (score = max over the
-source classes). This gives a usable model before any own training data
-exists. It becomes production only if no production model exists yet.
+The 80 COCO classes are merged into the configured classes inside the
+exported graph according to each class's COCO sources (score = max over the
+source classes). Only active classes WITH a COCO mapping are part of this
+model. This gives a usable model before any own training data exists. It
+becomes production only if no production model exists yet.
 """
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ import shutil
 
 from sqlalchemy import select
 
-from odcore.classes import CLASS_NAMES, validate_coco_mapping
+from odcore.classes import coco_index_mapping, list_classes
 from odcore.db import ModelStatus, ModelVersion
 from odcore.geometry import parse_input_size
 from odcore.openvino_detector import OpenVinoDetector
@@ -44,12 +45,16 @@ def run_bootstrap(force: bool = False) -> str | None:
     settings = get_settings()
     s3 = storage()
     with session_factory()() as session:
-        mapping = get_setting(session, "coco_class_mapping")
+        mapped = [c for c in list_classes(session, active_only=True) if c.coco_classes]
+        mapping = {c.name: list(c.coco_classes) for c in mapped}
+        index_mapping = coco_index_mapping(mapped)
         width, height = parse_input_size(get_setting(session, "default_input_size"))
         eval_conf = float(get_setting(session, "eval_confidence"))
         nms_iou = float(get_setting(session, "nms_iou_threshold"))
-    index_mapping = validate_coco_mapping(mapping)
-    groups = [index_mapping[name] for name in CLASS_NAMES]
+    if not mapped:
+        raise RuntimeError("no active class has a COCO mapping; the COCO model cannot be imported")
+    class_names = [c.name for c in mapped]
+    groups = [index_mapping[name] for name in class_names]
 
     work = os.path.join(settings.work_dir, "bootstrap")
     shutil.rmtree(work, ignore_errors=True)
@@ -69,13 +74,13 @@ def run_bootstrap(force: bool = False) -> str | None:
 
         metrics = None
         with session_factory()() as session:
-            val_dir = current_validation_set(session, s3, work)
+            val_dir = current_validation_set(session, s3, work, class_names)
         if val_dir:
             import openvino as ov
 
             coco_val, samples = load_val_samples(val_dir)
             metrics = evaluate_detector(OpenVinoDetector(ov.Core(), xml_path, width, height),
-                                        coco_val, samples, CLASS_NAMES, eval_conf, nms_iou)
+                                        coco_val, samples, tuple(class_names), eval_conf, nms_iou)
             metrics["note"] = "evaluated on the validation images labeled at import time"
             metrics["export_verification"] = verification
         metrics_path = os.path.join(work, "metrics.json")
@@ -88,7 +93,7 @@ def run_bootstrap(force: bool = False) -> str | None:
             kind="coco-bootstrap",
             input_width=width,
             input_height=height,
-            class_names=list(CLASS_NAMES),
+            class_names=class_names,
             metrics=metrics,
             training_run_id=None,
             dataset_snapshot=None,

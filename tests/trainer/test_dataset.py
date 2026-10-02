@@ -24,7 +24,7 @@ def test_build_coco_includes_negative_images():
     coco = build_coco([
         image(1, [("person", 10, 20, 110, 220), ("vehicle", 500, 500, 900, 800)]),
         image(2, []),  # labeled image without objects = negative example
-    ])
+    ], ["person", "bicycle", "vehicle"])
     assert [i["id"] for i in coco["images"]] == [1, 2]
     assert coco["images"][1]["file_name"].endswith(".jpg")
     assert [c["name"] for c in coco["categories"]] == ["person", "bicycle", "vehicle"]
@@ -38,8 +38,16 @@ def test_build_coco_includes_negative_images():
     assert stats["boxes_per_class"] == {"person": 1, "bicycle": 0, "vehicle": 1}
 
 
+def test_build_coco_uses_run_class_order_and_drops_other_classes():
+    coco = build_coco([image(1, [("person", 0, 0, 50, 50), ("battery", 100, 100, 150, 130)])], ["battery", "ladder"])
+    assert [(c["id"], c["name"]) for c in coco["categories"]] == [(1, "battery"), (2, "ladder")]
+    assert [(a["category_id"], a["bbox"]) for a in coco["annotations"]] == [(1, [100, 100, 50, 30])]
+    assert split_stats(coco)["boxes_per_class"] == {"battery": 1, "ladder": 0}
+
+
 def test_precision_recall_greedy_matching():
-    coco = build_coco([image(1, [("person", 0, 0, 100, 100), ("person", 200, 0, 300, 100)]), image(2, [])])
+    coco = build_coco([image(1, [("person", 0, 0, 100, 100), ("person", 200, 0, 300, 100)]), image(2, [])],
+                      ["person", "bicycle", "vehicle"])
     preds = {
         1: [
             Detection(0, 0.9, 2, 2, 100, 100),     # TP
@@ -60,7 +68,7 @@ def test_mmdet_config_keeps_negative_samples():
     pytest.importorskip("mmdet")
     from trainer.rtmdet.dataset_config import TrainParams, build_config
 
-    cfg = build_config(TrainParams(data_root="/data", work_dir="/work", load_from="/init.pth", input_width=1536,
+    cfg = build_config(TrainParams(data_root="/data", class_names=("person", "bicycle", "vehicle"), work_dir="/work", load_from="/init.pth", input_width=1536,
                                    input_height=864, epochs=30, batch_size=4, learning_rate=None, num_workers=2,
                                    num_train_images=100, use_amp=False, seed=1))
     ds = cfg.train_dataloader.dataset
@@ -78,3 +86,35 @@ def test_mmdet_config_keeps_negative_samples():
     assert cfg.train_cfg.max_epochs == 30
     switch = [h for h in cfg.custom_hooks if h["type"] == "PipelineSwitchHook"][0]
     assert switch["switch_epoch"] == 30 - 4
+
+
+def test_head_init_by_class_name(tmp_path):
+    torch = pytest.importorskip("torch")
+    from odcore.classes import COCO_CLASSES
+    from trainer.rtmdet.base_config import build_init_checkpoint
+
+    c_in = 4
+    coco_w = torch.arange(80, dtype=torch.float32).view(80, 1, 1, 1).repeat(1, c_in, 1, 1)
+    coco = {"bbox_head.rtm_cls.0.weight": coco_w, "bbox_head.rtm_cls.0.bias": torch.arange(80, dtype=torch.float32),
+            "backbone.x": torch.ones(2)}
+    torch.save({"state_dict": coco}, tmp_path / "coco.pth")
+    mapping = {"person": [0], "vehicle": [2, 3, 5, 7]}  # car, motorcycle, bus, truck
+
+    # from COCO: mapped classes get COCO rows (mean), unmapped class is freshly initialised
+    path, report = build_init_checkpoint(str(tmp_path / "coco.pth"), COCO_CLASSES, ["person", "vehicle", "battery"],
+                                         mapping, str(tmp_path / "init.pth"))
+    st = torch.load(path)["state_dict"]
+    assert st["bbox_head.rtm_cls.0.weight"].shape == (3, c_in, 1, 1)
+    assert st["bbox_head.rtm_cls.0.bias"][:2].tolist() == [0.0, (2 + 3 + 5 + 7) / 4]
+    assert st["bbox_head.rtm_cls.0.bias"][2].item() == pytest.approx(-4.595, abs=1e-3)
+    assert torch.equal(st["backbone.x"], torch.ones(2))
+    assert report == {"person": "COCO person", "vehicle": "COCO car+motorcycle+bus+truck", "battery": "random (new class)"}
+
+    # continue from a trained model: existing classes by name, new class from COCO mapping
+    trained = {"bbox_head.rtm_cls.0.weight": torch.full((2, c_in, 1, 1), 7.0), "bbox_head.rtm_cls.0.bias": torch.tensor([1.0, 2.0])}
+    torch.save({"state_dict": trained}, tmp_path / "trained.pth")
+    path, report = build_init_checkpoint(str(tmp_path / "trained.pth"), ["battery", "person"], ["person", "vehicle"],
+                                         mapping, str(tmp_path / "init2.pth"), coco_ckpt=str(tmp_path / "coco.pth"))
+    bias = torch.load(path)["state_dict"]["bbox_head.rtm_cls.0.bias"].tolist()
+    assert bias == [2.0, (2 + 3 + 5 + 7) / 4]
+    assert report == {"person": "source model", "vehicle": "COCO car+motorcycle+bus+truck"}

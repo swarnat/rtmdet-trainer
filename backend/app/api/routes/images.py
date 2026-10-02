@@ -9,6 +9,7 @@ from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from odcore.classes import active_class_names, is_reviewed_for
 from odcore.db import AnnotationStatus, DatasetSplit, Image
 from odcore.geometry import decode_image
 from odcore.storage import ObjectStorage
@@ -21,7 +22,7 @@ from app.db.repositories import images as repo
 from app.schemas.annotation import AnnotationOut, ImageDetail, ImageList, ImageOut, ImageUpdate, UploadResult
 from app.schemas.detection import DetectResponse
 from app.services import annotation as annotation_service
-from app.services.dataset import dataset_stats
+from app.services.dataset import dataset_stats, needs_review_ids
 from app.services.model_registry import ModelRegistry, get_registry
 from app.services.preprocessing import decode_upload, make_thumbnail
 
@@ -36,16 +37,21 @@ def get_image_or_404(session: Session, image_id: int) -> Image:
     return image
 
 
-def to_out(image: Image, count: int) -> ImageOut:
+def to_out(image: Image, count: int, active: list[str] | None = None) -> ImageOut:
     out = ImageOut.model_validate(image)
     out.annotation_status = image.annotation_status.value
     out.dataset_split = image.dataset_split.value if image.dataset_split else None
     out.annotation_count = count
+    out.needs_review = (
+        active is not None
+        and image.annotation_status == AnnotationStatus.labeled
+        and not is_reviewed_for(image.reviewed_classes, active)
+    )
     return out
 
 
-def to_detail(image: Image) -> ImageDetail:
-    base = to_out(image, len(image.annotations))
+def to_detail(image: Image, active: list[str]) -> ImageDetail:
+    base = to_out(image, len(image.annotations), active)
     return ImageDetail(
         **base.model_dump(),
         annotations=[AnnotationOut.model_validate(a) for a in image.annotations],
@@ -114,13 +120,16 @@ def list_images(
     status_filter: Annotated[Optional[AnnotationStatus], Query(alias="status")] = None,
     split: Optional[DatasetSplit] = None,
     negative: bool = False,
+    needs_review: bool = Query(False, description="labeled images not yet checked for all active classes"),
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     session: Session = Depends(get_db),
 ) -> ImageList:
-    total, items = repo.list_images(session, status_filter, split, negative, offset, limit)
+    restrict = needs_review_ids(session) if needs_review else None
+    total, items = repo.list_images(session, status_filter, split, negative, restrict, offset, limit)
     counts = repo.annotation_counts(session, [i.id for i in items])
-    return ImageList(total=total, items=[to_out(i, counts.get(i.id, 0)) for i in items])
+    active = active_class_names(session)
+    return ImageList(total=total, items=[to_out(i, counts.get(i.id, 0), active) for i in items])
 
 
 @router.get("/stats", summary="Dataset statistics")
@@ -130,7 +139,7 @@ def stats(session: Session = Depends(get_db)) -> dict:
 
 @router.get("/{image_id}", response_model=ImageDetail, summary="Image metadata with annotations")
 def get_image(image_id: int, session: Session = Depends(get_db)) -> ImageDetail:
-    return to_detail(get_image_or_404(session, image_id))
+    return to_detail(get_image_or_404(session, image_id), active_class_names(session))
 
 
 @router.get("/{image_id}/neighbours", summary="Previous/next image id (optionally within a status)")
@@ -173,7 +182,7 @@ def update_image(image_id: int, body: ImageUpdate, session: Session = Depends(ge
         image.dataset_split = DatasetSplit(body.dataset_split)
     session.commit()
     session.refresh(image)
-    return to_detail(image)
+    return to_detail(image, active_class_names(session))
 
 
 @router.delete("/{image_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete an image and its annotations")

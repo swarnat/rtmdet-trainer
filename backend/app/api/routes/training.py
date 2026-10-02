@@ -3,16 +3,18 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from odcore.db import AnnotationStatus, DatasetSplit, Image, ModelVersion, TrainingRun, TrainingStatus, utcnow
+from odcore.classes import active_class_names, list_classes
+from odcore.db import ModelVersion, TrainingRun, TrainingStatus, utcnow
 from odcore.geometry import parse_input_size
 
 from app.core.database import get_db
 from app.core.queue import enqueue_training, get_redis
 from app.db.repositories import training as repo
-from app.schemas.training import BaseModelOption, TrainingCreate, TrainingLog, TrainingRunOut
+from app.schemas.training import BaseModelOption, TrainingCreate, TrainingEligibility, TrainingLog, TrainingRunOut
+from app.services.dataset import eligibility
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/training", tags=["training"])
@@ -36,13 +38,34 @@ def get_run_or_404(session: Session, run_id: int) -> TrainingRun:
     return run
 
 
+def resolve_class_names(session, requested: list[str] | None) -> list[str]:
+    """Selected classes in configured order; default = all active classes."""
+    if not requested:
+        names = active_class_names(session)
+    else:
+        active = [c.name for c in list_classes(session, active_only=True)]
+        unknown = [n for n in requested if n not in active]
+        if unknown:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"unknown or inactive classes: {unknown}")
+        names = [n for n in active if n in set(requested)]
+    if not names:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "no classes selected")
+    return names
+
+
+@router.get("/eligibility", response_model=TrainingEligibility, summary="Usable images for a class selection")
+def get_eligibility(classes: str | None = None, session: Session = Depends(get_db)) -> TrainingEligibility:
+    requested = [c for c in (classes or "").split(",") if c]
+    return TrainingEligibility(**eligibility(session, resolve_class_names(session, requested)))
+
+
 @router.get("/base-models", response_model=list[BaseModelOption], summary="Models a training can start from")
 def base_models(session: Session = Depends(get_db)) -> list[BaseModelOption]:
     options = [
         BaseModelOption(
             id=COCO_BASE_ID,
             label="RTMDet-S (COCO-pretrained)",
-            description="Official MMDetection RTMDet-S checkpoint trained on COCO 2017; head re-initialised for person/bicycle/vehicle",
+            description="Official MMDetection RTMDet-S checkpoint trained on COCO 2017; classification head initialised from the COCO mapping of each class",
         )
     ]
     for mv in session.execute(select(ModelVersion).where(ModelVersion.kind == "trained").order_by(ModelVersion.id.desc())).scalars():
@@ -50,7 +73,7 @@ def base_models(session: Session = Depends(get_db)) -> list[BaseModelOption]:
             BaseModelOption(
                 id=mv.version,
                 label=f"{mv.version} ({mv.status.value})",
-                description=f"Continue training from {mv.version} ({mv.input_width}x{mv.input_height})",
+                description=f"Continue training from {mv.version} ({mv.input_width}x{mv.input_height}; classes: {', '.join(mv.class_names)})",
             )
         )
     return options
@@ -70,24 +93,24 @@ def create_run(body: TrainingCreate, session: Session = Depends(get_db)) -> Trai
         if base.kind != "trained":
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"'{base.version}' is not a trained model; use '{COCO_BASE_ID}'")
 
-    counts = dict(
-        session.execute(
-            select(Image.dataset_split, func.count(Image.id))
-            .where(Image.annotation_status == AnnotationStatus.labeled)
-            .group_by(Image.dataset_split)
-        ).all()
-    )
-    if not counts.get(DatasetSplit.train):
-        raise HTTPException(status.HTTP_409_CONFLICT, "no labeled images in the train split")
-    if not counts.get(DatasetSplit.validation):
+    class_names = resolve_class_names(session, body.class_names)
+    elig = eligibility(session, class_names)
+    if not elig["usable"]["train"]:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            "no labeled images in the validation split (label more images or assign one to 'validation')",
+            f"no usable labeled images in the train split for classes {class_names} "
+            f"({elig['needs_review']} labeled images still need review for these classes)",
+        )
+    if not elig["usable"]["validation"]:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "no usable labeled images in the validation split (label/review more images or assign one to 'validation')",
         )
 
     run = TrainingRun(
         status=TrainingStatus.queued,
         base_model_id=body.base_model_id,
+        class_names=class_names,
         input_width=width,
         input_height=height,
         epochs=body.epochs,

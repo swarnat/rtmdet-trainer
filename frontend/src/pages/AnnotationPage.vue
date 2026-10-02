@@ -21,12 +21,14 @@
             {{ store.image.annotation_status === 'labeled' ? (store.image.annotations.length ? 'annotiert' : 'negativ') : 'offen' }}
           </q-badge>
           <q-badge v-if="store.image.dataset_split" outline color="blue-grey" class="q-ml-xs">{{ store.image.dataset_split }}</q-badge>
+          <q-badge v-if="store.image.needs_review" color="amber-9" class="q-ml-xs">nachprüfen</q-badge>
           <q-badge v-if="store.dirty" color="orange-8" class="q-ml-xs">ungespeichert</q-badge>
         </div>
         <q-space v-if="!store.image" />
-        <q-btn-group flat class="no-wrap">
+        <!-- few classes: buttons, many classes: dropdown (shortcuts 1-9 work in both cases) -->
+        <q-btn-group v-if="classes.active.length <= 5" flat class="no-wrap">
           <q-btn
-            v-for="c in CLASSES"
+            v-for="c in classes.active"
             :key="c.name"
             dense
             no-caps
@@ -34,10 +36,34 @@
             :outline="store.activeClass !== c.name"
             :unelevated="store.activeClass === c.name"
             :style="store.activeClass === c.name ? { background: c.color, color: 'white' } : { color: c.color }"
-            :label="`${c.key} ${c.label}`"
+            :label="`${classes.shortcuts[c.name] ?? ''} ${c.label}`"
             @click="store.setClassForSelected(c.name)"
           />
         </q-btn-group>
+        <q-select
+          v-else
+          :model-value="store.activeClass"
+          :options="classOptions"
+          emit-value
+          map-options
+          dense
+          outlined
+          options-dense
+          label="Klasse"
+          style="min-width: 190px"
+          @update:model-value="(v) => store.setClassForSelected(v)"
+        >
+          <template #selected-item="scope">
+            <span class="class-dot" :style="{ background: scope.opt.color }" />{{ scope.opt.label }}
+          </template>
+          <template #option="scope">
+            <q-item v-bind="scope.itemProps">
+              <q-item-section avatar style="min-width: 20px"><span class="class-dot" :style="{ background: scope.opt.color }" /></q-item-section>
+              <q-item-section>{{ scope.opt.label }}</q-item-section>
+              <q-item-section side>{{ scope.opt.key }}</q-item-section>
+            </q-item>
+          </template>
+        </q-select>
         <q-btn dense flat icon="undo" :disable="!store.history.length" @click="store.undo()"><q-tooltip>Rückgängig (Strg+Z)</q-tooltip></q-btn>
         <q-btn dense flat icon="delete" :disable="!store.selectedId" @click="store.deleteSelected()"><q-tooltip>Box löschen (Entf)</q-tooltip></q-btn>
         <q-btn dense unelevated color="primary" icon="save" label="Speichern" no-caps no-wrap :loading="store.saving" :disable="!store.image" @click="save(false)">
@@ -70,6 +96,11 @@
     <div class="side-col bg-white column no-wrap">
       <q-scroll-area class="col">
         <div class="q-pa-sm">
+          <q-banner v-if="store.image?.needs_review" dense rounded class="bg-amber-2 text-body2 q-mb-sm">
+            <template #avatar><q-icon name="fact_check" color="amber-9" /></template>
+            Noch nicht geprüft auf: <b>{{ missingClasses.map((c) => classes.info(c).label).join(', ') }}</b>.
+            Bild auf diese Klassen prüfen und speichern – erst dann wird es für Trainings mit diesen Klassen verwendet.
+          </q-banner>
           <div class="text-subtitle2 q-mb-xs">Annotationen ({{ store.boxes.length }})</div>
           <div v-if="store.image && !store.boxes.length" class="text-caption text-grey-7 q-mb-sm">
             Keine Boxen. Speichern markiert das Bild als <b>negatives Trainingsbild</b>.
@@ -84,10 +115,10 @@
               @click="store.selectedId = b.uid"
             >
               <q-item-section avatar style="min-width: 24px">
-                <span class="class-dot" :style="{ background: classInfo(b.class).color }" />
+                <span class="class-dot" :style="{ background: classes.info(b.class).color }" />
               </q-item-section>
               <q-item-section>
-                <q-item-label>{{ i + 1 }}. {{ classInfo(b.class).label }}<span v-if="b.source === 'prediction'" class="text-grey-6"> (übernommen)</span></q-item-label>
+                <q-item-label>{{ i + 1 }}. {{ classes.info(b.class).label }}<span v-if="b.source === 'prediction'" class="text-grey-6"> (übernommen)</span></q-item-label>
                 <q-item-label caption class="mono">
                   {{ Math.round(b.x1) }},{{ Math.round(b.y1) }} – {{ Math.round(b.x2) }},{{ Math.round(b.y2) }}
                 </q-item-label>
@@ -131,7 +162,7 @@
                 icon="check"
                 label="Prediction übernehmen"
                 class="col"
-                :disable="!store.selectedPrediction"
+                :disable="!store.selectedPrediction || !store.acceptable(store.selectedPrediction)"
                 @click="store.acceptPrediction(store.selectedId!)"
               >
                 <q-tooltip>Ausgewählte Prediction übernehmen (Enter oder Doppelklick)</q-tooltip>
@@ -144,7 +175,7 @@
                 icon="done_all"
                 label="Alle übernehmen"
                 class="col"
-                :disable="!store.predictions.length"
+                :disable="!store.predictions.some(store.acceptable)"
                 @click="store.acceptAllPredictions()"
               />
             </div>
@@ -159,13 +190,14 @@
                 @dblclick="store.acceptPrediction(p.uid)"
               >
                 <q-item-section avatar style="min-width: 24px">
-                  <span class="class-dot" :style="{ border: `2px dashed ${classInfo(p.class).color}` }" />
+                  <span class="class-dot" :style="{ border: `2px dashed ${classes.info(p.class).color}` }" />
                 </q-item-section>
                 <q-item-section>
-                  <q-item-label>{{ classInfo(p.class).label }} · {{ (p.confidence * 100).toFixed(1) }} %</q-item-label>
+                  <q-item-label>{{ classes.info(p.class).label }} · {{ (p.confidence * 100).toFixed(1) }} %</q-item-label>
+                  <q-item-label v-if="!store.acceptable(p)" caption class="text-warning">Klasse hier nicht aktiv – nicht übernehmbar</q-item-label>
                 </q-item-section>
                 <q-item-section side>
-                  <q-btn dense flat round size="sm" icon="add_task" color="deep-purple" @click.stop="store.acceptPrediction(p.uid)" />
+                  <q-btn dense flat round size="sm" icon="add_task" color="deep-purple" :disable="!store.acceptable(p)" @click.stop="store.acceptPrediction(p.uid)" />
                 </q-item-section>
               </q-item>
             </q-list>
@@ -188,7 +220,7 @@
 
           <q-expansion-item dense icon="keyboard" label="Tastenkürzel" class="q-mt-md text-caption">
             <div class="q-pa-sm text-caption">
-              <div><b>1 / 2 / 3</b> Klasse Person / Fahrrad / Fahrzeug (auch für ausgewählte Box)</div>
+              <div><b>1 … 9</b> Klasse wählen (Reihenfolge unter „Klassen“; gilt auch für die ausgewählte Box)</div>
               <div><b>Entf</b> Box löschen · <b>Esc</b> Auswahl aufheben</div>
               <div><b>Strg+S</b> speichern · <b>Strg+Z</b> rückgängig</div>
               <div><b>Enter</b> Prediction übernehmen · <b>Umschalt+A</b> alle übernehmen</div>
@@ -204,13 +236,14 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import AnnotationCanvas from '@/components/AnnotationCanvas.vue'
 import ImageBrowser from '@/components/ImageBrowser.vue'
 import ModelSelector from '@/components/ModelSelector.vue'
-import { api, classInfo, CLASSES, errorMessage } from '@/services/api'
+import { api, errorMessage } from '@/services/api'
+import { useClassesStore } from '@/stores/classes'
 import { useAnnotationStore } from '@/stores/annotation'
 import { useModelsStore } from '@/stores/models'
 
@@ -219,6 +252,24 @@ const route = useRoute()
 const router = useRouter()
 const store = useAnnotationStore()
 const models = useModelsStore()
+const classes = useClassesStore()
+
+const classOptions = computed(() =>
+  classes.active.map((c) => ({ value: c.name, label: c.label, color: c.color, key: classes.shortcuts[c.name] ?? '' })),
+)
+const missingClasses = computed(() => {
+  const reviewed = new Set(store.image?.reviewed_classes ?? [])
+  return classes.active.map((c) => c.name).filter((n) => !reviewed.has(n))
+})
+
+// default drawing class: first active class
+watch(
+  () => classes.active,
+  (list) => {
+    if (list.length && !list.some((c) => c.name === store.activeClass)) store.activeClass = list[0].name
+  },
+  { immediate: true },
+)
 
 const browser = ref<InstanceType<typeof ImageBrowser> | null>(null)
 const imageId = ref<number | null>(null)
@@ -379,8 +430,8 @@ function onKeydown(e: KeyboardEvent) {
     store.undo()
   } else if (ctrl) {
     return
-  } else if (['1', '2', '3'].includes(e.key)) {
-    store.setClassForSelected(CLASSES[Number(e.key) - 1].name)
+  } else if (/^[1-9]$/.test(e.key) && classes.byShortcut(e.key)) {
+    store.setClassForSelected(classes.byShortcut(e.key)!.name)
   } else if (e.key === 'Delete' || e.key === 'Backspace') {
     e.preventDefault()
     store.deleteSelected()
@@ -414,6 +465,7 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('beforeunload', onBeforeUnload)
   if (!models.settings) models.refresh()
+  classes.refresh()
 })
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)

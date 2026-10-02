@@ -50,7 +50,11 @@
               <div><b>Art:</b> {{ detail.kind === 'coco-bootstrap' ? 'COCO-pretrained (nicht nachtrainiert)' : 'eigenes Training' }}</div>
               <div><b>Architektur:</b> {{ detail.architecture }}</div>
               <div><b>Trainingsauflösung:</b> {{ detail.input_width }}×{{ detail.input_height }}</div>
-              <div><b>Klassen:</b> {{ detail.class_names.join(', ') }}</div>
+              <div><b>Klassen:</b> {{ detail.class_names.map((n) => classes.info(n).label).join(', ') }}</div>
+              <div v-if="detail.metrics_json?.head_init">
+                <b>Initialisierung Klassifikationskopf:</b>
+                {{ Object.entries(detail.metrics_json.head_init).map(([k, v]) => `${k}: ${v}`).join('; ') }}
+              </div>
               <div v-if="detail.class_mapping_json"><b>COCO-Mapping:</b> {{ mappingText(detail.class_mapping_json) }}</div>
             </div>
             <div class="col-12 col-sm-6">
@@ -84,10 +88,12 @@ import { onMounted, ref, watch } from 'vue'
 import { useQuasar, type QTableColumn } from 'quasar'
 import MetricsTable from '@/components/MetricsTable.vue'
 import { api, errorMessage, fmtDate, fmtPct, type ModelVersion } from '@/services/api'
+import { useClassesStore } from '@/stores/classes'
 import { useModelsStore } from '@/stores/models'
 
 const $q = useQuasar()
 const models = useModelsStore()
+const classes = useClassesStore()
 const detail = ref<ModelVersion | null>(null)
 const notes = ref('')
 
@@ -103,6 +109,7 @@ const columns: QTableColumn<ModelVersion>[] = [
   { name: 'version', label: 'Version', field: 'version', align: 'left', sortable: true },
   { name: 'status', label: 'Status', field: 'status', align: 'left' },
   { name: 'kind', label: 'Art', field: (m) => (m.kind === 'coco-bootstrap' ? 'COCO' : 'trainiert'), align: 'left' },
+  { name: 'classes', label: 'Klassen', field: (m) => m.class_names.join(', '), align: 'left' },
   { name: 'res', label: 'Auflösung', field: (m) => `${m.input_width}×${m.input_height}`, align: 'left' },
   { name: 'p', label: 'Precision', field: (m) => fmtPct(m.metrics_json?.overall?.precision) },
   { name: 'r', label: 'Recall', field: (m) => fmtPct(m.metrics_json?.overall?.recall) },
@@ -161,8 +168,8 @@ function bootstrap() {
   $q.dialog({
     title: 'COCO-Basismodell importieren',
     message:
-      'Exportiert den COCO-pretrained RTMDet-S-Checkpoint mit dem konfigurierten Klassen-Mapping als neue Modellversion (ohne Training). ' +
-      'Sinnvoll z. B. nach einer Änderung des Mappings in den Einstellungen.',
+      'Exportiert den COCO-pretrained RTMDet-S-Checkpoint als neue Modellversion (ohne Training). Enthalten sind alle aktiven Klassen ' +
+      'mit COCO-Mapping. Sinnvoll nach Änderungen unter „Klassen“.',
     cancel: { label: 'Abbrechen', flat: true },
     ok: { label: 'Importieren' },
   }).onOk(async () => {

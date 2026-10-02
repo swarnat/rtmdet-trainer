@@ -65,6 +65,5 @@ def test_training_requires_validation_images(client):
 
 def test_settings_validation(client):
     assert client.put("/api/v1/settings", json={"values": {"default_input_size": "1000x500"}}).status_code == 422
-    assert client.put("/api/v1/settings", json={"values": {"coco_class_mapping": {"vehicle": ["spaceship"]}}}).status_code == 422
     res = client.put("/api/v1/settings", json={"values": {"default_confidence": 0.4}})
     assert res.status_code == 200 and res.json()["values"]["default_confidence"] == 0.4

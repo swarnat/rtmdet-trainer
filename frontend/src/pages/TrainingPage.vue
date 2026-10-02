@@ -22,6 +22,18 @@
                 </q-item>
               </template>
             </q-select>
+            <q-select
+              v-model="form.class_names"
+              :options="classOptions"
+              emit-value
+              map-options
+              multiple
+              use-chips
+              outlined
+              dense
+              label="Klassen"
+              hint="Standard: alle aktiven Klassen"
+            />
             <q-select v-model="form.input_size" :options="models.inputSizes" outlined dense label="Input Resolution (B×H)" />
             <div class="row q-col-gutter-sm">
               <q-input v-model.number="form.epochs" type="number" :min="1" :max="1000" outlined dense label="Epochs" class="col-6" />
@@ -39,10 +51,14 @@
               />
               <q-input v-model.number="form.num_workers" type="number" :min="0" :max="32" outlined dense label="Loader-Worker" class="col-4" />
             </div>
-            <div v-if="stats" class="text-caption">
-              Dataset: {{ stats.images_labeled }} annotierte Bilder ({{ stats.splits.train }} train / {{ stats.splits.validation }} val,
-              davon {{ stats.images_negative }} negativ), {{ stats.images_unlabeled }} offen.
-              <span v-if="!stats.splits.validation" class="text-negative">Mindestens ein Validierungsbild nötig.</span>
+            <div v-if="elig" class="text-caption">
+              Verwendbar: <b>{{ elig.usable.train }}</b> train / <b>{{ elig.usable.validation }}</b> val
+              (davon {{ elig.negative }} negativ).
+              <span v-if="elig.needs_review" class="text-warning">
+                {{ elig.needs_review }} annotierte Bilder sind für diese Klassen noch nicht geprüft und werden ausgelassen.
+              </span>
+              <span v-if="stats?.images_unlabeled"> {{ stats.images_unlabeled }} Bilder offen.</span>
+              <div v-if="!elig.usable.validation" class="text-negative">Mindestens ein verwendbares Validierungsbild nötig.</div>
             </div>
             <q-btn color="primary" icon="play_arrow" label="Training starten" :loading="starting" @click="start" />
           </q-card-section>
@@ -98,6 +114,7 @@
             <div class="row q-col-gutter-md text-body2">
               <div class="col-12 col-sm-6">
                 <div><b>Base Model:</b> {{ selected.base_model_id }}</div>
+                <div><b>Klassen:</b> {{ (selected.class_names ?? []).map((n) => classes.info(n).label).join(', ') }}</div>
                 <div><b>Auflösung:</b> {{ selected.input_width }}×{{ selected.input_height }}</div>
                 <div><b>Epochs / Batch:</b> {{ selected.epochs }} / {{ selected.batch_size }}</div>
                 <div><b>Learning Rate:</b> {{ selected.learning_rate ?? 'auto' }}</div>
@@ -112,6 +129,9 @@
                   <b>Daten:</b>
                   train {{ selected.dataset_stats_json.train?.images }} Bilder / {{ selected.dataset_stats_json.train?.boxes }} Boxen,
                   val {{ selected.dataset_stats_json.validation?.images }} / {{ selected.dataset_stats_json.validation?.boxes }}
+                  <span v-if="selected.dataset_stats_json.excluded_needs_review">
+                    · {{ selected.dataset_stats_json.excluded_needs_review }} ungeprüft ausgelassen
+                  </span>
                 </div>
               </div>
             </div>
@@ -154,14 +174,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useQuasar, type QTableColumn } from 'quasar'
 import MetricsTable from '@/components/MetricsTable.vue'
-import { api, errorMessage, fmtDate, fmtPct, type BaseModelOption, type DatasetStats, type TrainingRun } from '@/services/api'
+import { api, errorMessage, fmtDate, fmtPct, type BaseModelOption, type DatasetStats, type TrainingEligibility, type TrainingRun } from '@/services/api'
+import { useClassesStore } from '@/stores/classes'
 import { useModelsStore } from '@/stores/models'
 
 const $q = useQuasar()
 const models = useModelsStore()
+const classes = useClassesStore()
 
 const runs = ref<TrainingRun[]>([])
 const baseModels = ref<BaseModelOption[]>([])
@@ -178,13 +200,28 @@ const form = reactive({
   batch_size: 4,
   learning_rate: '' as string | null,
   num_workers: 4,
+  class_names: [] as string[],
 })
+const elig = ref<TrainingEligibility | null>(null)
+const classOptions = computed(() => classes.active.map((c) => ({ value: c.name, label: c.label })))
+
+watch(
+  () => [...form.class_names],
+  async (names) => {
+    try {
+      elig.value = await api.eligibility(names)
+    } catch {
+      elig.value = null
+    }
+  },
+)
 
 const statusColor: Record<string, string> = { queued: 'grey-7', running: 'blue-7', completed: 'green-7', failed: 'red-7' }
 const columns: QTableColumn<TrainingRun>[] = [
   { name: 'id', label: '#', field: 'id', align: 'left', sortable: true },
   { name: 'status', label: 'Status', field: 'status', align: 'left' },
   { name: 'base', label: 'Base', field: 'base_model_id', align: 'left' },
+  { name: 'classes', label: 'Klassen', field: (r) => (r.class_names ?? []).join(', '), align: 'left' },
   { name: 'res', label: 'Auflösung', field: (r) => `${r.input_width}×${r.input_height}`, align: 'left' },
   { name: 'epochs', label: 'Epochs', field: 'epochs' },
   { name: 'map', label: 'mAP50', field: (r) => fmtPct(r.metrics_json?.overall?.mAP50) },
@@ -249,6 +286,7 @@ async function start() {
   try {
     const run = await api.startRun({
       base_model_id: form.base_model_id,
+      class_names: form.class_names.length ? form.class_names : undefined,
       input_size: form.input_size,
       epochs: form.epochs,
       batch_size: form.batch_size,
@@ -283,8 +321,9 @@ function cancel(id: number) {
 
 let timer: number | undefined
 onMounted(async () => {
-  await models.refresh()
+  await Promise.all([models.refresh(), classes.refresh()])
   form.input_size = models.defaultInputSize
+  form.class_names = classes.active.map((c) => c.name)
   const [bm, st] = await Promise.all([api.baseModels(), api.datasetStats()])
   baseModels.value = bm
   stats.value = st

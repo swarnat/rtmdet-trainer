@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api, type ClassName, type DetectResponse, type ImageDetail } from '@/services/api'
+import { useClassesStore } from './classes'
 
 /** A box being edited in the UI (original image pixel coordinates). */
 export interface EditBox {
@@ -28,7 +29,7 @@ export const useAnnotationStore = defineStore('annotation', () => {
   const predictions = ref<Prediction[]>([])
   const lastDetection = ref<DetectResponse | null>(null)
   const selectedId = ref<string | null>(null)
-  const activeClass = ref<ClassName>('person')
+  const activeClass = ref<ClassName>('')
   const dirty = ref(false)
   const saving = ref(false)
   const history = ref<string[]>([])
@@ -128,21 +129,27 @@ export const useAnnotationStore = defineStore('annotation', () => {
   }
 
   /** Turn a prediction into a normal, editable annotation. */
+  /** Predictions of classes that are unknown/inactive here cannot become annotations. */
+  function acceptable(p: Prediction) {
+    return useClassesStore().info(p.class).active
+  }
+
   function acceptPrediction(id: string) {
     const p = predictions.value.find((x) => x.uid === id)
-    if (!p) return
+    if (!p || !acceptable(p)) return
     const b = addBox({ class: p.class, x1: p.x1, y1: p.y1, x2: p.x2, y2: p.y2, source: 'prediction' })
     predictions.value = predictions.value.filter((x) => x.uid !== id)
     selectedId.value = b.uid
   }
 
   function acceptAllPredictions() {
-    if (!predictions.value.length) return
+    const accepted = predictions.value.filter(acceptable)
+    if (!accepted.length) return
     snapshot()
-    for (const p of predictions.value) {
+    for (const p of accepted) {
       boxes.value.push(clamp({ uid: uid('a'), class: p.class, x1: p.x1, y1: p.y1, x2: p.x2, y2: p.y2, source: 'prediction' }))
     }
-    predictions.value = []
+    predictions.value = predictions.value.filter((p) => !acceptable(p))
     selectedId.value = null
     dirty.value = true
   }
@@ -182,6 +189,6 @@ export const useAnnotationStore = defineStore('annotation', () => {
     image, boxes, predictions, lastDetection, selectedId, activeClass, dirty, saving, history,
     selectedBox, selectedPrediction,
     load, addBox, updateBox, deleteSelected, setClassForSelected, undo,
-    setDetection, acceptPrediction, acceptAllPredictions, clearPredictions, save,
+    setDetection, acceptable, acceptPrediction, acceptAllPredictions, clearPredictions, save,
   }
 })

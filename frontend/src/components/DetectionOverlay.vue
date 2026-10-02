@@ -31,9 +31,12 @@
 </template>
 
 <script setup lang="ts">
-import { classInfo, type DetectResponse } from '@/services/api'
+import type { DetectResponse } from '@/services/api'
+import { useClassesStore } from '@/stores/classes'
 
 defineProps<{ src: string; result: DetectResponse }>()
+const classes = useClassesStore()
+const classInfo = (name: string) => classes.info(name)
 </script>
 
 <style scoped>

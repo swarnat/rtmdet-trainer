@@ -4,14 +4,13 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from odcore.classes import CLASS_NAMES
-
 from .base_config import load_base_config
 
 
 @dataclass(frozen=True)
 class TrainParams:
     data_root: str          # local snapshot dir with annotations/{train,val}.json and images/
+    class_names: tuple[str, ...]
     work_dir: str
     load_from: str          # checkpoint used to initialise all weights
     input_width: int
@@ -36,10 +35,10 @@ def stage2_epochs(epochs: int) -> int:
 
 
 def build_config(p: TrainParams):
-    cfg = load_base_config(num_classes=len(CLASS_NAMES))
+    cfg = load_base_config(num_classes=len(p.class_names))
     w, h = p.input_width, p.input_height
     pad = dict(img=(114, 114, 114))
-    metainfo = dict(classes=CLASS_NAMES, palette=[(220, 20, 60), (0, 160, 255), (255, 170, 0)])
+    metainfo = dict(classes=tuple(p.class_names))
 
     # Negative images/crops (no boxes) must stay in the pipeline:
     # allow_negative_crop=True and keep_empty=False (True would drop empty samples).

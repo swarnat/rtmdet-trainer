@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from app.api.routes import annotations, detect, images, models, settings, training
+from app.api.routes import annotations, classes, detect, images, models, settings, training
 from app.core.config import get_settings
 
 API_PREFIX = "/api/v1"
@@ -23,7 +23,8 @@ app = FastAPI(
     title="Object Detection Training & Inference",
     version="0.1.0",
     description=(
-        "Detects **person**, **bicycle** and **vehicle** in 16:9 camera images with an RTMDet-S model "
+        "Detects configurable object classes (initially **person**, **bicycle**, **vehicle**) in 16:9 camera "
+        "images with an RTMDet-S model "
         "running on OpenVINO (CPU). Provides training-image management, annotation storage, "
         "manually started training runs and a model registry with production/candidate/archived versions."
     ),
@@ -67,5 +68,5 @@ def health() -> JSONResponse:
     return JSONResponse(status_code=200 if ok else 503, content={"status": "ok" if ok else "degraded", "checks": checks})
 
 
-for router in (health_router, detect.router, images.router, annotations.router, training.router, models.router, settings.router):
+for router in (health_router, detect.router, classes.router, images.router, annotations.router, training.router, models.router, settings.router):
     app.include_router(router, prefix=API_PREFIX)

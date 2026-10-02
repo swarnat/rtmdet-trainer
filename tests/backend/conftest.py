@@ -16,7 +16,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from odcore.db import Base
+from odcore.classes import DEFAULT_CLASSES
+from odcore.db import Base, DetectionClass
 
 # Fixed raw model outputs in model-input pixels for a 1536x864 input
 RAW_BOXES = np.array(
@@ -64,4 +65,8 @@ def constant_model_xml(tmp_path) -> str:
 def session_factory():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine, expire_on_commit=False)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    with factory() as s:  # same initial classes as the Alembic migration
+        s.add_all(DetectionClass(sort_order=i, active=True, **c) for i, c in enumerate(DEFAULT_CLASSES))
+        s.commit()
+    return factory

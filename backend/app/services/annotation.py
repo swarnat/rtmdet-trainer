@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
+from odcore.classes import active_class_names, list_classes
 from odcore.db import Annotation, AnnotationStatus, DatasetSplit, Image, utcnow
 from odcore.geometry import normalize_box
 from odcore.settings_store import get_setting
@@ -22,10 +23,21 @@ def ensure_split(session: Session, image: Image) -> None:
         image.dataset_split = DatasetSplit(assign_split(image.sha256, ratio))
 
 
+def mark_reviewed(session: Session, image: Image) -> None:
+    """Saving as labeled confirms the image was checked for all currently active classes."""
+    image.annotation_status = AnnotationStatus.labeled
+    image.labeled_at = utcnow()
+    image.reviewed_classes = active_class_names(session)
+    ensure_split(session, image)
+
+
 def replace_annotations(session: Session, image: Image, items: list[AnnotationIn], mark_labeled: bool) -> Image:
     """Replace all boxes of an image. An empty list + mark_labeled = negative example."""
+    known = {c.name for c in list_classes(session)}
     new_boxes = []
     for index, item in enumerate(items):
+        if item.class_name not in known:
+            raise AnnotationValidationError(f"annotation #{index}: unknown class '{item.class_name}'")
         try:
             x1, y1, x2, y2 = normalize_box(item.x1, item.y1, item.x2, item.y2, image.width, image.height)
         except ValueError as exc:
@@ -41,9 +53,7 @@ def replace_annotations(session: Session, image: Image, items: list[AnnotationIn
     session.flush()
     image.annotations.extend(new_boxes)
     if mark_labeled:
-        image.annotation_status = AnnotationStatus.labeled
-        image.labeled_at = utcnow()
-        ensure_split(session, image)
+        mark_reviewed(session, image)
     image.updated_at = utcnow()
     session.commit()
     session.refresh(image)
@@ -51,10 +61,10 @@ def replace_annotations(session: Session, image: Image, items: list[AnnotationIn
 
 
 def set_status(session: Session, image: Image, status: AnnotationStatus) -> None:
-    image.annotation_status = status
     if status == AnnotationStatus.labeled:
-        image.labeled_at = utcnow()
-        ensure_split(session, image)
+        mark_reviewed(session, image)
     else:
+        image.annotation_status = status
         image.labeled_at = None
+        image.reviewed_classes = None
     image.updated_at = utcnow()

@@ -35,7 +35,7 @@
         <q-card flat bordered class="full-height">
           <q-card-section>
             <div class="text-h6">Annotationen pro Klasse</div>
-            <div v-for="c in CLASSES" :key="c.name" class="q-my-sm">
+            <div v-for="c in classRows" :key="c.name" class="q-my-sm">
               <div class="row text-body2">
                 <span class="class-dot" :style="{ background: c.color, marginTop: '5px' }" />{{ c.label }}
                 <q-space />{{ stats?.annotations_per_class[c.name] ?? 0 }}
@@ -89,11 +89,17 @@ import { useQuasar } from 'quasar'
 import DetectionOverlay from '@/components/DetectionOverlay.vue'
 import MetricsTable from '@/components/MetricsTable.vue'
 import ModelSelector from '@/components/ModelSelector.vue'
-import { api, CLASSES, errorMessage, fmtDate, type DatasetStats, type DetectResponse } from '@/services/api'
+import { api, errorMessage, fmtDate, type DatasetStats, type DetectResponse } from '@/services/api'
+import { useClassesStore } from '@/stores/classes'
 import { useModelsStore } from '@/stores/models'
 
 const $q = useQuasar()
 const models = useModelsStore()
+const classes = useClassesStore()
+// all classes that are active or still have boxes
+const classRows = computed(() =>
+  classes.all.filter((c) => c.active || (stats.value?.annotations_per_class[c.name] ?? 0) > 0).map((c) => classes.info(c.name)),
+)
 const stats = ref<DatasetStats | null>(null)
 const file = ref<File | null>(null)
 const preview = ref<string | null>(null)
@@ -104,7 +110,11 @@ const opts = reactive({ model: 'production', input_size: '1536x864', confidence:
 const cards = computed(() => [
   { label: 'Trainingsbilder', value: stats.value?.images_total ?? '–', hint: 'in Garage S3' },
   { label: 'Annotiert', value: stats.value?.images_labeled ?? '–', hint: `davon ${stats.value?.images_negative ?? 0} negativ (ohne Objekte)` },
-  { label: 'Offen', value: stats.value?.images_unlabeled ?? '–', hint: 'noch nicht bearbeitet' },
+  {
+    label: 'Offen',
+    value: stats.value?.images_unlabeled ?? '–',
+    hint: `noch nicht bearbeitet · ${stats.value?.images_needs_review ?? 0} nachzuprüfen (neue Klassen)`,
+  },
   { label: 'Modellversionen', value: models.versions.length, hint: `${models.versions.filter((m) => m.status === 'candidate').length} Candidates` },
 ])
 

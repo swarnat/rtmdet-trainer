@@ -9,6 +9,7 @@
           <q-route-tab :to="{ name: 'annotate' }" icon="edit_square" label="Annotation" />
           <q-route-tab to="/training" icon="model_training" label="Training" />
           <q-route-tab to="/models" icon="inventory_2" label="Modelle" />
+          <q-route-tab to="/classes" icon="category" label="Klassen" />
           <q-route-tab to="/settings" icon="settings" label="Einstellungen" />
         </q-tabs>
         <q-space />
@@ -29,8 +30,13 @@
 
 <script setup lang="ts">
 import { onMounted } from 'vue'
+import { useClassesStore } from '@/stores/classes'
 import { useModelsStore } from '@/stores/models'
 
 const models = useModelsStore()
-onMounted(() => models.refresh())
+const classes = useClassesStore()
+onMounted(() => {
+  models.refresh()
+  classes.refresh()
+})
 </script>

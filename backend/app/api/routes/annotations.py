@@ -3,6 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from odcore.classes import active_class_names
+
 from app.api.routes.images import get_image_or_404, to_detail
 from app.core.database import get_db
 from app.schemas.annotation import AnnotationOut, AnnotationsSave, ImageDetail
@@ -33,4 +35,4 @@ def save_annotations(image_id: int, body: AnnotationsSave, session: Session = De
     except AnnotationValidationError as exc:
         session.rollback()
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
-    return to_detail(image)
+    return to_detail(image, active_class_names(session))

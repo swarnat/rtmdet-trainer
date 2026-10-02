@@ -1,15 +1,19 @@
 // Typed client for the FastAPI backend (/api/v1)
 
-export type ClassName = 'person' | 'bicycle' | 'vehicle'
+// Class names are configured in the application (see ClassesPage / stores/classes.ts)
+export type ClassName = string
 
-export const CLASSES: { name: ClassName; label: string; color: string; key: string }[] = [
-  { name: 'person', label: 'Person', color: '#e53935', key: '1' },
-  { name: 'bicycle', label: 'Fahrrad', color: '#1e88e5', key: '2' },
-  { name: 'vehicle', label: 'Fahrzeug', color: '#fb8c00', key: '3' },
-]
-
-export function classInfo(name: string) {
-  return CLASSES.find((c) => c.name === name) ?? { name, label: name, color: '#9e9e9e', key: '' }
+export interface DetectionClass {
+  id: number
+  name: string
+  label: string
+  color: string
+  coco_classes: string[]
+  sort_order: number
+  active: boolean
+  annotation_count: number
+  created_at: string
+  updated_at: string
 }
 
 export interface Annotation {
@@ -44,6 +48,8 @@ export interface ImageItem {
   annotation_status: 'unlabeled' | 'labeled'
   dataset_split: 'train' | 'validation' | null
   annotation_count: number
+  reviewed_classes: string[] | null
+  needs_review: boolean
   created_at: string
   updated_at: string
   labeled_at: string | null
@@ -94,6 +100,7 @@ export interface Metrics {
   per_class?: Record<string, MetricSet>
   per_size?: Record<string, MetricSet>
   mmdet_val_history?: { epoch: number; bbox_mAP?: number; bbox_mAP_50?: number; bbox_mAP_s?: number }[]
+  head_init?: Record<string, string>
   note?: string
 }
 
@@ -132,12 +139,32 @@ export interface TrainingProgress {
   val_history?: { epoch: number; bbox_mAP?: number; bbox_mAP_50?: number }[]
 }
 
+export interface SplitStats {
+  images: number
+  negative_images: number
+  boxes: number
+  boxes_per_class: Record<string, number>
+}
+
+export interface TrainingEligibility {
+  class_names: string[]
+  usable: { train: number; validation: number }
+  needs_review: number
+  negative: number
+}
+
 export interface TrainingRun {
   id: number
   status: 'queued' | 'running' | 'completed' | 'failed'
   base_model_id: string
+  class_names: string[] | null
   dataset_snapshot: string | null
-  dataset_stats_json: Record<string, { images: number; negative_images: number; boxes: number; boxes_per_class: Record<string, number> }> | null
+  dataset_stats_json: {
+    classes?: string[]
+    excluded_needs_review?: number
+    train?: SplitStats
+    validation?: SplitStats
+  } | null
   input_width: number
   input_height: number
   epochs: number
@@ -164,6 +191,7 @@ export interface DatasetStats {
   images_labeled: number
   images_unlabeled: number
   images_negative: number
+  images_needs_review: number
   splits: { train: number; validation: number }
   annotations_per_class: Record<string, number>
 }
@@ -175,7 +203,6 @@ export type Settings = Record<string, unknown> & {
   nms_iou_threshold: number
   validation_ratio: number
   eval_confidence: number
-  coco_class_mapping: Record<string, string[]>
 }
 
 export class ApiError extends Error {
@@ -225,7 +252,7 @@ function detectForm(opts: DetectOptions, form = new FormData()) {
 
 export const api = {
   // images
-  listImages(params: { status?: string; split?: string; negative?: boolean; offset?: number; limit?: number }) {
+  listImages(params: { status?: string; split?: string; negative?: boolean; needs_review?: boolean; offset?: number; limit?: number }) {
     const q = new URLSearchParams()
     Object.entries(params).forEach(([k, v]) => {
       if (v !== undefined && v !== null && v !== '' && v !== false) q.set(k, String(v))
@@ -263,7 +290,9 @@ export const api = {
   listRuns: () => request<TrainingRun[]>('/training/runs'),
   getRun: (id: number) => request<TrainingRun>(`/training/runs/${id}`),
   getRunLog: (id: number) => request<{ id: number; status: string; log: string }>(`/training/runs/${id}/log`),
-  startRun: (body: { base_model_id: string; input_size: string; epochs: number; batch_size: number; learning_rate?: number | null; num_workers?: number }) =>
+  eligibility: (classes: string[]) =>
+    request<TrainingEligibility>(`/training/eligibility?classes=${encodeURIComponent(classes.join(','))}`),
+  startRun: (body: { base_model_id: string; class_names?: string[]; input_size: string; epochs: number; batch_size: number; learning_rate?: number | null; num_workers?: number }) =>
     request<TrainingRun>('/training/runs', json('POST', body)),
   cancelRun: (id: number) => request<TrainingRun>(`/training/runs/${id}/cancel`, { method: 'POST' }),
 
@@ -274,6 +303,16 @@ export const api = {
   updateModelNotes: (version: string, notes: string) => request<ModelVersion>(`/models/${version}`, json('PATCH', { notes })),
   bootstrapModel: (force = false) => request<{ job_id: string }>(`/models/bootstrap?force=${force}`, { method: 'POST' }),
   artifactUrl: (version: string, artifact: string) => `${BASE}/models/${version}/artifacts/${artifact}`,
+
+  // classes
+  listClasses: () => request<DetectionClass[]>('/classes'),
+  cocoClasses: () => request<string[]>('/classes/coco'),
+  createClass: (body: { name: string; label: string; color?: string | null; coco_classes: string[] }) =>
+    request<DetectionClass>('/classes', json('POST', body)),
+  updateClass: (name: string, body: Partial<Pick<DetectionClass, 'label' | 'color' | 'coco_classes' | 'active'>>) =>
+    request<DetectionClass>(`/classes/${name}`, json('PATCH', body)),
+  reorderClasses: (names: string[]) => request<DetectionClass[]>('/classes/order', json('PUT', { names })),
+  deleteClass: (name: string) => request<void>(`/classes/${name}`, { method: 'DELETE' }),
 
   // settings
   getSettings: () => request<{ values: Settings; defaults: Settings }>('/settings'),

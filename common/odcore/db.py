@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     Enum,
     Float,
@@ -77,6 +78,10 @@ class Image(Base):
     )
     dataset_split: Mapped[Optional[DatasetSplit]] = mapped_column(_enum(DatasetSplit, "dataset_split"))
     labeled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # Classes the image was checked for when it was last saved as labeled. An image
+    # is only used for training if it was checked for every class of the run, so
+    # adding a class never turns unreviewed objects into "background".
+    reviewed_classes: Mapped[Optional[list[str]]] = mapped_column(JSONType)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow, server_default=func.now()
@@ -115,6 +120,8 @@ class TrainingRun(Base):
         _enum(TrainingStatus, "training_status"), nullable=False, default=TrainingStatus.queued, index=True
     )
     base_model_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Ordered class list of this run (becomes the class list of the resulting model)
+    class_names: Mapped[Optional[list[str]]] = mapped_column(JSONType)
     dataset_snapshot: Mapped[Optional[str]] = mapped_column(String(256))
     dataset_stats_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONType)
     input_width: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -172,6 +179,24 @@ class ModelVersion(Base):
     notes: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now())
     activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
+class DetectionClass(Base):
+    __tablename__ = "detection_classes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # Immutable identifier, referenced by annotations and model versions
+    name: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
+    label: Mapped[str] = mapped_column(String(64), nullable=False)
+    color: Mapped[str] = mapped_column(String(16), nullable=False)
+    # COCO source classes (for the COCO bootstrap model and head initialisation); may be empty
+    coco_classes: Mapped[list[str]] = mapped_column(JSONType, nullable=False, default=list)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("true"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow, server_default=func.now()
+    )
 
 
 class Setting(Base):

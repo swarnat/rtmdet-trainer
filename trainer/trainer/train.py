@@ -10,7 +10,7 @@ import traceback
 
 import torch
 
-from odcore.classes import CLASS_NAMES, validate_coco_mapping
+from odcore.classes import COCO_CLASSES, coco_index_mapping, list_classes
 from odcore.db import ModelVersion, TrainingRun, TrainingStatus, utcnow
 from odcore.openvino_detector import OpenVinoDetector
 from odcore.settings_store import get_setting
@@ -23,7 +23,7 @@ from .export_onnx import RTMDetDeployWrapper, build_detector, export_onnx
 from .export_openvino import export_openvino, verify_openvino
 from .progress import ProgressHookFactory, RunReporter
 from .publish import Artifacts, publish_model
-from .rtmdet.base_config import BASE_MODEL_ID, ensure_base_checkpoint, make_head_initialised_checkpoint
+from .rtmdet.base_config import BASE_MODEL_ID, build_init_checkpoint, ensure_base_checkpoint
 from .rtmdet.dataset_config import TrainParams, build_config, default_learning_rate
 
 log = logging.getLogger("trainer.train")
@@ -76,7 +76,9 @@ def run_training(run_id: int) -> None:
             batch_size=run.batch_size, learning_rate=run.learning_rate,
             num_workers=int((run.params_json or {}).get("num_workers", 4)),
         )
-        mapping = get_setting(session, "coco_class_mapping")
+        class_names = list(run.class_names or [c.name for c in list_classes(session, active_only=True)])
+        mapping = coco_index_mapping(c for c in list_classes(session) if c.name in class_names)
+        params["class_names"] = class_names
         eval_conf = float(get_setting(session, "eval_confidence"))
         nms_iou = float(get_setting(session, "nms_iou_threshold"))
 
@@ -93,26 +95,26 @@ def run_training(run_id: int) -> None:
 
         # 1) dataset snapshot
         with session_factory()() as session:
-            snapshot = create_snapshot(session, s3, run_id, work_root)
+            snapshot = create_snapshot(session, s3, run_id, work_root, class_names)
         _update_run(run_id, dataset_snapshot=snapshot.prefix, dataset_stats_json=snapshot.stats)
 
         # 2) initial weights
         reporter.progress(phase="preparing", percent=1)
         ckpt_dir = os.path.join(work_root, "checkpoints")
         os.makedirs(ckpt_dir, exist_ok=True)
+        coco_ckpt = ensure_base_checkpoint(os.path.join(settings.work_dir, "base"))
         if params["base_model_id"] == BASE_MODEL_ID:
-            coco_ckpt = ensure_base_checkpoint(os.path.join(settings.work_dir, "base"))
-            init_ckpt = make_head_initialised_checkpoint(
-                coco_ckpt, validate_coco_mapping(mapping), CLASS_NAMES, os.path.join(ckpt_dir, "init.pth")
-            )
-            log.info("initialised classification head from COCO classes %s", json.dumps(mapping))
+            source_ckpt, source_classes = coco_ckpt, list(COCO_CLASSES)
         else:
             with session_factory()() as session:
                 base = session.query(ModelVersion).filter_by(version=params["base_model_id"]).one()
-                base_key = base.checkpoint_key
-            init_ckpt = os.path.join(ckpt_dir, "init.pth")
-            s3.download_file(s3.settings.bucket_models, base_key, init_ckpt)
-            log.info("continuing from %s", params["base_model_id"])
+                base_key, source_classes = base.checkpoint_key, list(base.class_names)
+            source_ckpt = os.path.join(ckpt_dir, "base.pth")
+            s3.download_file(s3.settings.bucket_models, base_key, source_ckpt)
+        init_ckpt, head_report = build_init_checkpoint(
+            source_ckpt, source_classes, class_names, mapping, os.path.join(ckpt_dir, "init.pth"), coco_ckpt=coco_ckpt
+        )
+        log.info("initial weights from %s; classification head per class: %s", params["base_model_id"], json.dumps(head_report))
 
         # 3) training
         from mmengine.runner import Runner
@@ -122,6 +124,7 @@ def run_training(run_id: int) -> None:
         use_amp = torch.cuda.is_available()
         tp = TrainParams(
             data_root=snapshot.local_dir,
+            class_names=tuple(class_names),
             work_dir=os.path.join(work_root, "mmdet"),
             load_from=init_ckpt,
             input_width=params["width"],
@@ -151,7 +154,7 @@ def run_training(run_id: int) -> None:
         export_dir = os.path.join(work_root, "export")
         os.makedirs(export_dir, exist_ok=True)
         ckpt_path = os.path.join(export_dir, "checkpoint.pth")
-        _strip_checkpoint(best_ckpt, ckpt_path, {"training_run_id": run_id, "classes": list(CLASS_NAMES),
+        _strip_checkpoint(best_ckpt, ckpt_path, {"training_run_id": run_id, "classes": class_names,
                                                  "source_checkpoint": os.path.basename(best_ckpt)})
         config_path = os.path.join(export_dir, "config.py")
         cfg.dump(config_path)
@@ -169,9 +172,10 @@ def run_training(run_id: int) -> None:
 
         coco_val, samples = load_val_samples(snapshot.local_dir)
         ov_detector = OpenVinoDetector(ov.Core(), xml_path, params["width"], params["height"])
-        metrics = evaluate_detector(ov_detector, coco_val, samples, CLASS_NAMES, eval_conf, nms_iou)
+        metrics = evaluate_detector(ov_detector, coco_val, samples, tuple(class_names), eval_conf, nms_iou)
         metrics["mmdet_val_history"] = val_history
         metrics["export_verification"] = verification
+        metrics["head_init"] = head_report
         metrics_path = os.path.join(export_dir, "metrics.json")
         with open(metrics_path, "w") as f:
             json.dump(metrics, f, indent=1)
@@ -186,7 +190,7 @@ def run_training(run_id: int) -> None:
             kind="trained",
             input_width=params["width"],
             input_height=params["height"],
-            class_names=list(CLASS_NAMES),
+            class_names=class_names,
             metrics=metrics,
             training_run_id=run_id,
             dataset_snapshot=snapshot.prefix,

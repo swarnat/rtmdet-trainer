@@ -12,6 +12,7 @@ export default createRouter({
         { path: 'annotate/:id?', name: 'annotate', component: () => import('@/pages/AnnotationPage.vue') },
         { path: 'training', name: 'training', component: () => import('@/pages/TrainingPage.vue') },
         { path: 'models', name: 'models', component: () => import('@/pages/ModelsPage.vue') },
+        { path: 'classes', name: 'classes', component: () => import('@/pages/ClassesPage.vue') },
         { path: 'settings', name: 'settings', component: () => import('@/pages/SettingsPage.vue') },
       ],
     },

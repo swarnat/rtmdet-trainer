@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import os
 import urllib.request
 
@@ -89,22 +90,58 @@ def ensure_base_checkpoint(local_dir: str) -> str:
     return path
 
 
-def make_head_initialised_checkpoint(coco_ckpt: str, mapping: dict[str, list[int]], class_names: tuple[str, ...], out_path: str) -> str:
-    """Create a 3-class checkpoint from the 80-class COCO checkpoint.
+# RTMDet initialises the classification convs with N(0, 0.01) and a bias for prior probability 0.01
+_CLS_BIAS_INIT = -math.log((1 - 0.01) / 0.01)
 
-    Backbone, neck and box regression are reused as-is. The classification
-    layers are initialised from the matching COCO classes (mean of the source
-    rows, e.g. vehicle = mean(car, motorcycle, bus, truck)) instead of random
-    weights, which helps a lot on small datasets.
+
+def _load_state(path: str) -> dict:
+    ckpt = torch.load(path, map_location="cpu")
+    return ckpt.get("state_dict", ckpt)
+
+
+def build_init_checkpoint(
+    source_ckpt: str,
+    source_classes: list[str] | tuple[str, ...],
+    target_classes: list[str],
+    coco_mapping: dict[str, list[int]],
+    out_path: str,
+    coco_ckpt: str | None = None,
+) -> tuple[str, dict[str, str]]:
+    """Create the initial checkpoint for a run with ``target_classes``.
+
+    Backbone, neck and box regression are taken from ``source_ckpt``. Each row
+    of the classification layers is initialised, per target class, from
+
+    1. the same class in the source model (continue training), else
+    2. the mean of its COCO source classes (``coco_mapping``; from the source
+       if it is the COCO checkpoint, otherwise from ``coco_ckpt``), else
+    3. fresh RTMDet initialisation (new class without COCO equivalent).
+
+    Returns the path and a ``{class: origin}`` report for the log.
     """
-    ckpt = torch.load(coco_ckpt, map_location="cpu")
-    state = ckpt.get("state_dict", ckpt)
+    state = _load_state(source_ckpt)
+    is_coco = tuple(source_classes) == COCO_CLASSES
+    coco_state = state if is_coco else (_load_state(coco_ckpt) if coco_ckpt else None)
+    report: dict[str, str] = {}
     new_state = {}
     for key, value in state.items():
-        if key.startswith("bbox_head.rtm_cls.") and value.shape[0] == len(COCO_CLASSES):
-            rows = [value[mapping[name]].mean(dim=0) for name in class_names]
-            new_state[key] = torch.stack(rows, dim=0).clone()
-        else:
+        if not (key.startswith("bbox_head.rtm_cls.") and value.shape[0] == len(source_classes)):
             new_state[key] = value
-    torch.save({"state_dict": new_state, "meta": {"source": "rtmdet-s-coco", "class_mapping": mapping}}, out_path)
-    return out_path
+            continue
+        rows = []
+        for name in target_classes:
+            if name in source_classes and not is_coco:
+                rows.append(value[list(source_classes).index(name)])
+                report[name] = "source model"
+            elif name in coco_mapping and coco_state is not None and key in coco_state:
+                rows.append(coco_state[key][coco_mapping[name]].mean(dim=0))
+                report[name] = "COCO " + "+".join(COCO_CLASSES[i] for i in coco_mapping[name])
+            else:
+                if key.endswith(".bias"):
+                    rows.append(torch.full_like(value[0], _CLS_BIAS_INIT))
+                else:
+                    rows.append(torch.randn_like(value[0]) * 0.01)
+                report[name] = "random (new class)"
+        new_state[key] = torch.stack(rows, dim=0).clone()
+    torch.save({"state_dict": new_state, "meta": {"classes": list(target_classes), "head_init": report}}, out_path)
+    return out_path, report

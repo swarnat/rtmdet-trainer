@@ -56,7 +56,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import BoundingBox from './BoundingBox.vue'
-import { classInfo, type ClassName } from '@/services/api'
+import type { ClassName } from '@/services/api'
+import { useClassesStore } from '@/stores/classes'
 import type { EditBox, Prediction } from '@/stores/annotation'
 
 const props = defineProps<{
@@ -77,6 +78,7 @@ const emit = defineEmits<{
   accept: [uid: string]
 }>()
 
+const classes = useClassesStore()
 const MIN_BOX_PX = 3 // minimum box size in original image pixels
 
 const container = ref<HTMLDivElement | null>(null)
@@ -111,7 +113,7 @@ const draftConfig = computed(() => {
     y: Math.min(d.y1, d.y2),
     width: Math.abs(d.x2 - d.x1),
     height: Math.abs(d.y2 - d.y1),
-    stroke: classInfo(props.activeClass).color,
+    stroke: classes.info(props.activeClass).color,
     strokeWidth: 2,
     strokeScaleEnabled: false,
     dash: [6 / view.scale, 4 / view.scale],

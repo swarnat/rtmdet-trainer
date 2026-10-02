@@ -21,7 +21,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { classInfo } from '@/services/api'
+import { useClassesStore } from '@/stores/classes'
 import type { EditBox, Prediction } from '@/stores/annotation'
 
 const props = defineProps<{
@@ -39,8 +39,9 @@ const emit = defineEmits<{
   accept: [uid: string]
 }>()
 
+const classes = useClassesStore()
 const hover = ref(false)
-const color = computed(() => classInfo(props.box.class).color)
+const color = computed(() => classes.info(props.box.class).color)
 const width = computed(() => props.box.x2 - props.box.x1)
 const height = computed(() => props.box.y2 - props.box.y1)
 
@@ -65,7 +66,7 @@ const rectConfig = computed(() => ({
 const fontSize = computed(() => 12 / props.scale)
 const labelY = computed(() => Math.max(0, props.box.y1 - fontSize.value - 6 / props.scale))
 const labelText = computed(() => {
-  const info = classInfo(props.box.class)
+  const info = classes.info(props.box.class)
   if (props.prediction && 'confidence' in props.box) return `⚡ ${info.label} ${(props.box.confidence * 100).toFixed(0)}%`
   return props.box.source === 'prediction' ? `${info.label} ✓` : info.label
 })

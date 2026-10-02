@@ -24,6 +24,7 @@ def list_images(
     status: Optional[AnnotationStatus] = None,
     split: Optional[DatasetSplit] = None,
     negative_only: bool = False,
+    restrict_ids: Optional[list[int]] = None,
     offset: int = 0,
     limit: int = 100,
 ) -> tuple[int, list[Image]]:
@@ -32,6 +33,8 @@ def list_images(
         stmt = stmt.where(Image.annotation_status == status)
     if split is not None:
         stmt = stmt.where(Image.dataset_split == split)
+    if restrict_ids is not None:
+        stmt = stmt.where(Image.id.in_(restrict_ids))
     if negative_only:
         stmt = stmt.where(
             Image.annotation_status == AnnotationStatus.labeled,

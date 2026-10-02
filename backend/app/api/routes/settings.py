@@ -5,7 +5,6 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from odcore.classes import validate_coco_mapping
 from odcore.geometry import parse_input_size
 from odcore.settings_store import DEFAULT_SETTINGS, get_all_settings, set_setting
 
@@ -34,11 +33,6 @@ def _validate(key: str, value: Any) -> Any:
         value = float(value)
         if not 0.0 < value < 1.0:
             raise ValueError("validation_ratio must be in (0, 1)")
-        return value
-    if key == "coco_class_mapping":
-        if not isinstance(value, dict):
-            raise ValueError("coco_class_mapping must be an object")
-        validate_coco_mapping(value)
         return value
     return value
 

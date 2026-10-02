@@ -1,6 +1,6 @@
 # Object Detection Training & Inference
 
-Lokal betreibbare Webanwendung zur Erkennung von **Personen**, **Fahrrädern** und **Fahrzeugen** in 16:9-Kamerabildern, inklusive Annotation, manuell gestartetem Nachtraining (RTMDet-S / MMDetection) und Modellverwaltung mit Production/Candidate/Archiv-Versionen. Die Inferenz läuft mit OpenVINO auf der CPU, das Training in einem separaten Container (GPU optional).
+Lokal betreibbare Webanwendung zur Objekterkennung in 16:9-Kamerabildern. Die Klassen sind in der Anwendung konfigurierbar; ausgeliefert wird sie mit **Personen**, **Fahrrädern** und **Fahrzeugen**, inklusive Annotation, manuell gestartetem Nachtraining (RTMDet-S / MMDetection) und Modellverwaltung mit Production/Candidate/Archiv-Versionen. Die Inferenz läuft mit OpenVINO auf der CPU, das Training in einem separaten Container (GPU optional).
 
 ```
             ┌──────────────┐  /api  ┌──────────────────────────┐        ┌────────────┐
@@ -41,7 +41,7 @@ docker compose up -d           # baut und startet alles
 * UI: <http://localhost:8080> (`FRONTEND_PORT`)
 * OpenAPI/Swagger: <http://localhost:8080/api/v1/docs> (auch direkt: <http://localhost:8000/api/v1/docs>, `API_PORT`)
 
-Beim ersten Start lädt der Trainer den COCO-pretrained RTMDet-S-Checkpoint, legt ihn in S3 ab (`models/base/…`) und exportiert ihn als `model-0001`. Dabei werden die COCO-Klassen per Mapping auf die eigenen drei Klassen abgebildet (siehe unten). Da noch kein Production-Modell existiert, wird `model-0001` Production. `/detect` funktioniert also sofort, ohne eigene Trainingsdaten. Abschalten lässt sich das mit `BOOTSTRAP_ON_START=false`.
+Beim ersten Start lädt der Trainer den COCO-pretrained RTMDet-S-Checkpoint, legt ihn in S3 ab (`models/base/…`) und exportiert ihn als `model-0001`. Dabei werden die COCO-Klassen per Mapping auf die konfigurierten Klassen abgebildet (siehe unten). Da noch kein Production-Modell existiert, wird `model-0001` Production. `/detect` funktioniert also sofort, ohne eigene Trainingsdaten. Abschalten lässt sich das mit `BOOTSTRAP_ON_START=false`.
 
 Alle Daten liegen in Docker-Volumes (`postgres-data`, `garage-meta`, `garage-data`, `redis-data`, `model-cache`) und überleben Neustarts und `docker compose down`. `docker compose down -v` löscht alles.
 
@@ -51,20 +51,20 @@ Sämtliche Zugangsdaten kommen aus der `.env` (Vorlage: `.env.example`). Im Quel
 
 GPU-Training wird über `COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml` in der `.env` aktiviert. Ohne GPU diese Zeile auf `docker-compose.yml` setzen.
 
-Fachliche Einstellungen (Standardauflösung, angebotene Auflösungen, Confidence, NMS-IoU, Validierungsanteil, COCO-Klassen-Mapping) liegen in der Tabelle `settings` und sind in der UI unter **Einstellungen** änderbar. Sie wirken ohne Neustart.
+Die Klassen samt COCO-Mapping werden unter **Klassen** gepflegt (Tabelle `detection_classes`). Weitere fachliche Einstellungen (Standardauflösung, angebotene Auflösungen, Confidence, NMS-IoU, Validierungsanteil) liegen in der Tabelle `settings` und sind in der UI unter **Einstellungen** änderbar. Sie wirken ohne Neustart.
 
 ## Bedienung
 
 ### Annotation (`/annotate`)
 
-* Links: Bildliste mit Filter (alle / offen / fertig / negativ), Upload per Button oder Drag & Drop (JPEG/PNG/WebP/BMP, Duplikate werden per SHA-256 erkannt).
+* Links: Bildliste mit Filter (alle / offen / fertig / negativ / prüfen), Upload per Button oder Drag & Drop (JPEG/PNG/WebP/BMP, Duplikate werden per SHA-256 erkannt).
 * Mitte: Bild mit Bounding Boxes (Konva). **Ziehen auf freier Fläche** erzeugt eine Box mit der aktiven Klasse. Eine Box **anklicken** wählt sie aus, **ziehen** verschiebt sie, die **Anfasser** skalieren sie. Mausrad zoomt, Leertaste, mittlere oder rechte Maustaste + Ziehen verschiebt die Ansicht.
 * Rechts: Liste der Boxen, Modelltest, Bildaktionen.
 * **Speichern** markiert das Bild als `labeled`. Ein gespeichertes Bild **ohne Boxen** ist ein gültiges **negatives Trainingsbild**. Ein noch nicht bearbeitetes Bild bleibt `unlabeled` und kommt nicht ins Training.
 
 | Taste | Funktion |
 |-------|----------|
-| `1` / `2` / `3` | Klasse Person / Fahrrad / Fahrzeug (für neue Boxen und die ausgewählte Box) |
+| `1` … `9` | Klasse in der unter „Klassen“ festgelegten Reihenfolge (für neue Boxen und die ausgewählte Box). Bis 5 aktive Klassen als Buttons, darüber als Dropdown |
 | `Entf` / `Backspace` | ausgewählte Box löschen |
 | `Strg+S` | speichern |
 | `Strg+Z` | rückgängig |
@@ -77,9 +77,13 @@ Fachliche Einstellungen (Standardauflösung, angebotene Auflösungen, Confidence
 
 **Modell testen:** Production-Modell, neuesten Candidate oder eine beliebige Version wählen, dazu Eingangsauflösung und Confidence. Die API führt eine normale Detection auf dem gespeicherten Bild aus. Predictions erscheinen gestrichelt, kursiv, mit ⚡ und Confidence und sind so klar von manuellen Annotationen zu unterscheiden. „Prediction übernehmen“ bzw. „Alle übernehmen“ macht daraus normale, editierbare Annotationen (Quelle `prediction`).
 
+### Klassen (`/classes`)
+
+Klassen hinzufügen, umbenennen (Anzeigename), einfärben, sortieren, deaktivieren oder (ohne Annotationen) löschen sowie das COCO-Mapping pflegen. Details unter [Klassen](#klassen).
+
 ### Training (`/training`)
 
-Dialog mit Base Model (RTMDet-S COCO oder eine eigene Version zum Weitertrainieren), Input Resolution, Epochs, Batch Size, optionaler Learning Rate und Anzahl Loader-Worker. Ein Lauf durchläuft `queued → running → completed | failed`. Die UI zeigt Fortschritt (Epoche, Loss, ETA), die Validierungs-mAP je Epoche und das Live-Log. Läufe lassen sich abbrechen. Ein Training wird **nie automatisch Production**, das Ergebnis ist immer eine neue **Candidate**-Version.
+Dialog mit den zu trainierenden **Klassen** (Standard: alle aktiven), Base Model (RTMDet-S COCO oder eine eigene Version zum Weitertrainieren), Input Resolution, Epochs, Batch Size, optionaler Learning Rate und Anzahl Loader-Worker. Ein Lauf durchläuft `queued → running → completed | failed`. Die UI zeigt Fortschritt (Epoche, Loss, ETA), die Validierungs-mAP je Epoche und das Live-Log. Läufe lassen sich abbrechen. Ein Training wird **nie automatisch Production**, das Ergebnis ist immer eine neue **Candidate**-Version.
 
 ### Modelle (`/models`)
 
@@ -135,24 +139,34 @@ Weitere Endpunkte (Auszug):
 | `GET /api/v1/training/runs/{id}` / `…/log` / `POST …/cancel` | Status, Log, Abbruch |
 | `GET /api/v1/models`, `POST /api/v1/models/{version}/activate` | Modelle, Aktivierung/Rollback |
 | `POST /api/v1/models/bootstrap` | COCO-Basismodell (neu) importieren |
+| `GET/POST /api/v1/classes`, `PATCH/DELETE /api/v1/classes/{name}`, `PUT /api/v1/classes/order` | Klassen verwalten |
+| `GET /api/v1/training/eligibility?classes=a,b` | verwendbare Bilder für eine Klassenauswahl |
 | `GET/PUT /api/v1/settings` | Einstellungen |
 
 ## Funktionsweise im Detail
 
 ### Klassen
 
-Eigene Klassen: `0 person`, `1 bicycle`, `2 vehicle`. Das Standard-Mapping vom COCO-Basismodell (Setting `coco_class_mapping`) ist:
+Die Klassen werden in der Anwendung unter **Klassen** verwaltet (Tabelle `detection_classes`). Ausgeliefert werden:
 
-| eigene Klasse | COCO-Klassen |
-|---------------|--------------|
-| person  | person |
-| bicycle | bicycle |
-| vehicle | car, motorcycle, bus, truck |
+| Name | Anzeigename | COCO-Quellklassen |
+|------|-------------|-------------------|
+| `person`  | Person   | person |
+| `bicycle` | Fahrrad  | bicycle |
+| `vehicle` | Fahrzeug | car, motorcycle, bus, truck |
 
-Züge und Schienenfahrzeuge (`train`) werden bewusst **nicht** als `vehicle` behandelt. Das Mapping wird verwendet
+Züge und Schienenfahrzeuge (`train`) werden bewusst **nicht** als `vehicle` behandelt.
 
-1. für das importierte COCO-Modell (Score einer eigenen Klasse = Maximum der Scores der zugeordneten COCO-Klassen, direkt im exportierten Graphen), und
-2. zur Initialisierung des Klassifikationskopfs beim Training ab COCO. Die Gewichte der eigenen Klasse sind der Mittelwert der zugeordneten COCO-Klassen statt einer Zufallsinitialisierung, das hilft bei kleinen Datensätzen.
+* **Name** ist die feste Kennung. Er steht in Annotationen, API-Antworten (`"class"`) und Modellversionen und ist deshalb nicht änderbar (`a–z`, `0–9`, `_`). Anzeigename, Farbe, Reihenfolge (Tasten 1–9) und COCO-Mapping sind jederzeit änderbar.
+* **Jede Modellversion speichert ihre eigene Klassenliste** (`class_names`). `/detect` liefert immer die Klassen des verwendeten Modells, auch wenn die Konfiguration inzwischen anders aussieht.
+* **Neue Klasse, z. B. „Batterie“:** Bereits annotierte Bilder wurden nicht auf sie geprüft. Jedes Bild speichert daher, für welche Klassen es geprüft wurde (`images.reviewed_classes`, gesetzt beim Speichern). Ein Training verwendet nur Bilder, die für **alle** Klassen des Laufs geprüft sind; die übrigen erscheinen unter Annotation → „Prüfen“. So lernt das Modell ungeprüfte Objekte nicht als Hintergrund. Für die bisherigen Klassen bleiben die Bilder weiter nutzbar.
+* **Klassen pro Trainingslauf:** Im Trainingsdialog lassen sich Klassen auswählen, z. B. für ein separates Modell nur mit `battery` und `ladder_type`. Boxen anderer Klassen gelten in diesem Lauf als Hintergrund. Der Dialog zeigt, wie viele Bilder für die Auswahl verwendbar sind.
+* **Deaktivieren** blendet eine Klasse in Annotation und Training aus, die Boxen bleiben erhalten. Löschen geht nur, solange die Klasse keine Annotationen hat. Mindestens eine Klasse muss aktiv bleiben.
+
+Die **COCO-Quellklassen** sind optional und werden verwendet
+
+1. für das importierte COCO-Modell. Es enthält alle aktiven Klassen *mit* Mapping; der Score einer Klasse ist das Maximum der Scores der zugeordneten COCO-Klassen, direkt im exportierten Graphen.
+2. zur Initialisierung des Klassifikationskopfs beim Training: pro Klasse aus dem Basismodell, falls dort per Name vorhanden (Weitertraining), sonst als Mittelwert der zugeordneten COCO-Klassen, sonst zufällig wie bei RTMDet (Klassen ohne COCO-Entsprechung). Welche Variante gewählt wurde, steht im Log und in den Modelldetails.
 
 Nach einer Mapping-Änderung unter „Modelle“ das COCO-Basismodell neu importieren (oder `python3 scripts/bootstrap-model.py --url http://localhost:8080`).
 
@@ -172,18 +186,18 @@ Bei jedem Training erzeugt der Trainer aus PostgreSQL und S3 einen Snapshot unte
 
 ```
 manifest.json            Bild-IDs, SHA-256, Split, Quell-Keys, Statistik
-annotations/train.json   COCO Detection Format (Kategorien 1=person, 2=bicycle, 3=vehicle)
+annotations/train.json   COCO Detection Format (Kategorien 1..N in der Klassenreihenfolge des Laufs)
 annotations/val.json
 images/<sha256>.<ext>    Kopien der Bilder (bleiben erhalten, auch wenn Bilder später gelöscht werden)
 ```
 
-* Es werden alle Bilder mit Status `labeled` verwendet, **inklusive negativer Bilder ohne Boxen** (in der Trainings-Pipeline auch über `filter_empty_gt=False`, `allow_negative_crop=True` usw.).
+* Es werden alle Bilder mit Status `labeled` verwendet, die für alle Klassen des Laufs geprüft sind, **inklusive negativer Bilder ohne Boxen** (in der Trainings-Pipeline auch über `filter_empty_gt=False`, `allow_negative_crop=True` usw.).
 * Der Split (`train`/`validation`, Default 85/15) wird beim ersten Labeln deterministisch aus dem Bild-Hash bestimmt und am Bild **persistiert**. Er wird nie neu gewürfelt, auch nicht bei geändertem Validierungsanteil. Manuelles Umsetzen ist per `PATCH /api/v1/images/{id}` möglich.
 * Der Snapshot entsteht beim **Start** des Laufs (nicht beim Einreihen).
 
 ### Training
 
-* Modell: RTMDet-S (`rtmdet_s_8xb32-300e_coco.py` aus MMDetection 3.3.0), initialisiert mit dem COCO-Checkpoint, `num_classes=3`, BN statt SyncBN (Single-GPU).
+* Modell: RTMDet-S (`rtmdet_s_8xb32-300e_coco.py` aus MMDetection 3.3.0), initialisiert mit dem COCO-Checkpoint bzw. dem gewählten Basismodell, `num_classes` = Anzahl Klassen des Laufs, BN statt SyncBN (Single-GPU).
 * Pipeline wie RTMDet (CachedMosaic, RandomResize, RandomCrop, HSV, Flip, CachedMixUp), angepasst auf die gewählte Auflösung. In den letzten ~15 % der Epochen läuft sie ohne Mosaic/MixUp (`PipelineSwitchHook`), dazu EMA.
 * Optimizer AdamW. Ohne Angabe gilt `LR = 0.00025 × Batch/4` (Fine-Tuning) mit linearem Warm-up und Cosine-Decay. Auf der GPU wird mit AMP trainiert.
 * Validierung jede Epoche (bis 50 Epochen). Exportiert wird der beste Checkpoint nach COCO-mAP (EMA-Gewichte).
@@ -202,9 +216,10 @@ Ausgewertet wird das **exportierte OpenVINO-Modell** auf dem Validierungssplit, 
 
 | Tabelle | Wichtigste Felder |
 |---------|-------------------|
-| `images` | `s3_object_key`, `sha256` (unique), `width`, `height`, `annotation_status` (`unlabeled`/`labeled`), `dataset_split`, `created_at`, `updated_at` |
+| `images` | `s3_object_key`, `sha256` (unique), `width`, `height`, `annotation_status` (`unlabeled`/`labeled`), `dataset_split`, `reviewed_classes`, `created_at`, `updated_at` |
 | `annotations` | `image_id`, `class_name`, `x1`, `y1`, `x2`, `y2` (Originalpixel), `source` (`manual`/`prediction`) |
-| `training_runs` | `status`, `base_model_id`, `dataset_snapshot`, `input_width/height`, `epochs`, `batch_size`, `learning_rate`, `started_at`, `finished_at`, `progress_json`, `metrics_json`, `log`, `error` |
+| `detection_classes` | `name` (unique, fest), `label`, `color`, `coco_classes`, `sort_order`, `active` |
+| `training_runs` | `status`, `base_model_id`, `class_names`, `dataset_snapshot`, `input_width/height`, `epochs`, `batch_size`, `learning_rate`, `started_at`, `finished_at`, `progress_json`, `metrics_json`, `log`, `error` |
 | `model_versions` | `version`, `status`, `kind`, `checkpoint_key`, `onnx_key`, `openvino_key`, `config_key`, `input_width/height`, `class_names`, `metrics_json`, `dataset_snapshot`, `training_run_id`, `created_at`, `activated_at` |
 | `settings` | `key`, `value` (JSON) |
 

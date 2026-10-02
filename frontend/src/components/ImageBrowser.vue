@@ -12,6 +12,7 @@
           { label: 'Offen', value: 'unlabeled' },
           { label: 'Fertig', value: 'labeled' },
           { label: 'Negativ', value: 'negative' },
+          { label: 'Prüfen', value: 'review' },
         ]"
       />
       <div class="row items-center no-wrap q-gutter-x-sm">
@@ -41,6 +42,9 @@
               <q-badge v-if="img.annotation_status === 'unlabeled'" color="grey-6" label="offen" />
               <q-badge v-else-if="img.annotation_count === 0" color="purple-6" label="negativ" />
               <q-badge v-else color="green-7" :label="`${img.annotation_count} Boxen`" />
+              <q-badge v-if="img.needs_review" color="amber-9" class="q-ml-xs" label="prüfen">
+                <q-tooltip>Noch nicht auf alle aktiven Klassen geprüft</q-tooltip>
+              </q-badge>
               <q-badge v-if="img.dataset_split" outline color="blue-grey" class="q-ml-xs" :label="img.dataset_split === 'train' ? 'train' : 'val'" />
             </q-item-label>
           </q-item-section>
@@ -66,7 +70,7 @@ const emit = defineEmits<{ select: [id: number]; filterChange: [status: string |
 const $q = useQuasar()
 
 const PAGE = 100
-const filter = ref<'all' | 'unlabeled' | 'labeled' | 'negative'>('all')
+const filter = ref<'all' | 'unlabeled' | 'labeled' | 'negative' | 'review'>('all')
 const items = ref<ImageItem[]>([])
 const total = ref(0)
 const loading = ref(false)
@@ -77,6 +81,7 @@ function query(offset: number) {
   return api.listImages({
     status: filter.value === 'unlabeled' || filter.value === 'labeled' ? filter.value : undefined,
     negative: filter.value === 'negative',
+    needs_review: filter.value === 'review',
     offset,
     limit: PAGE,
   })

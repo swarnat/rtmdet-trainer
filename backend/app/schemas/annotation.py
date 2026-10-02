@@ -5,16 +5,12 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from odcore.classes import CLASS_NAMES
-
-ClassName = Literal["person", "bicycle", "vehicle"]
-assert set(ClassName.__args__) == set(CLASS_NAMES)  # type: ignore[attr-defined]
-
 
 class AnnotationIn(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    class_name: ClassName = Field(validation_alias="class", serialization_alias="class")
+    # validated against the configured classes when saving
+    class_name: str = Field(validation_alias="class", serialization_alias="class", max_length=32)
     x1: float
     y1: float
     x2: float
@@ -59,6 +55,9 @@ class ImageOut(BaseModel):
     annotation_status: str
     dataset_split: Optional[str]
     annotation_count: int = 0
+    reviewed_classes: Optional[list[str]] = None
+    # labeled, but not checked for all currently active classes
+    needs_review: bool = False
     created_at: datetime
     updated_at: datetime
     labeled_at: Optional[datetime]

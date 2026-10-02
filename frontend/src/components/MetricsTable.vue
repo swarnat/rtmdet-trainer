@@ -22,7 +22,7 @@
           <td class="text-right">{{ fmtPct(metrics.per_size?.small?.['mAP50-95']) }}</td>
           <td class="text-right">{{ counts(metrics.overall) }}</td>
         </tr>
-        <tr v-for="c in CLASSES" :key="c.name">
+        <tr v-for="c in rows" :key="c.name">
           <td class="text-left"><span class="class-dot" :style="{ background: c.color }" />{{ c.label }}</td>
           <td class="text-right">{{ fmtPct(metrics.per_class?.[c.name]?.precision) }}</td>
           <td class="text-right">{{ fmtPct(metrics.per_class?.[c.name]?.recall) }}</td>
@@ -63,9 +63,14 @@
 </template>
 
 <script setup lang="ts">
-import { CLASSES, fmtPct, type MetricSet, type Metrics } from '@/services/api'
+import { computed } from 'vue'
+import { fmtPct, type MetricSet, type Metrics } from '@/services/api'
+import { useClassesStore } from '@/stores/classes'
 
-defineProps<{ metrics: Metrics | null | undefined }>()
+const props = defineProps<{ metrics: Metrics | null | undefined }>()
+const classes = useClassesStore()
+// rows = classes of the evaluated model (not the currently configured ones)
+const rows = computed(() => Object.keys(props.metrics?.per_class ?? {}).map((n) => classes.info(n)))
 
 const SIZES = { small: 'klein (< 32²)', medium: 'mittel (32²–96²)', large: 'groß (> 96²)' } as const
 
