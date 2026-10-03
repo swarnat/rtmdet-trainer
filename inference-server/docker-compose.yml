@@ -1,0 +1,29 @@
+# Production detection API - standalone stack, independent of the training stack
+#   cd inference-server && cp .env.example .env   (set MODEL_UPLOAD_KEY)
+#   docker compose up -d --build       (or with a prebuilt image: docker compose pull && docker compose up -d --no-build)
+# The model is not part of the image; the training system uploads it (Einstellungen → Produktivsystem,
+# then "Ausrollen" on the Modelle page). It is stored in the volume "models" and survives restarts.
+name: object-detection-inference
+
+services:
+  inference:
+    build:
+      context: ..
+      dockerfile: inference-server/Dockerfile
+    # built with `make inference-server` in the repository root
+    image: ${INFERENCE_IMAGE:-swarnat/rtmdet-detection}:${INFERENCE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      MODEL_UPLOAD_KEY: ${MODEL_UPLOAD_KEY:?set MODEL_UPLOAD_KEY in .env (at least 16 characters)}
+      MIN_CONFIDENCE: ${MIN_CONFIDENCE:-0.15}
+      OPENVINO_DEVICE: ${OPENVINO_DEVICE:-CPU}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
+      MAX_MODEL_UPLOAD_MB: ${MAX_MODEL_UPLOAD_MB:-1024}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - models:/data
+    ports:
+      - "${INFERENCE_PORT:-8100}:8000"
+
+volumes:
+  models:

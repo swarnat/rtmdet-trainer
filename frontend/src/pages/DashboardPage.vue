@@ -2,11 +2,13 @@
   <q-page padding>
     <div class="row q-col-gutter-md">
       <div v-for="card in cards" :key="card.label" class="col-6 col-md-3">
-        <q-card flat bordered>
+        <q-card flat bordered class="full-height">
           <q-card-section>
-            <div class="text-caption text-grey-7">{{ card.label }}</div>
+            <div class="text-caption text-muted text-weight-medium q-mb-sm">
+              {{ card.label }}<HelpIcon v-if="card.help" :term="card.help" inline />
+            </div>
             <div class="text-h4">{{ card.value }}</div>
-            <div class="text-caption">{{ card.hint }}</div>
+            <div class="text-caption text-muted">{{ card.hint }}</div>
           </q-card-section>
         </q-card>
       </div>
@@ -23,7 +25,7 @@
               </div>
               <MetricsTable class="q-mt-sm" :metrics="models.production.metrics_json" />
             </template>
-            <div v-else class="text-grey-7">
+            <div v-else class="text-muted">
               Noch kein Production-Modell. Der Trainer importiert beim ersten Start automatisch das COCO-pretrained RTMDet-S, oder aktiviere eine
               Version unter <router-link to="/models">Modelle</router-link>.
             </div>
@@ -34,19 +36,19 @@
       <div class="col-12 col-md-6">
         <q-card flat bordered class="full-height">
           <q-card-section>
-            <div class="text-h6">Annotationen pro Klasse</div>
+            <div class="text-h6">Annotationen pro Klasse<HelpIcon term="hn" inline /></div>
             <div v-for="c in classRows" :key="c.name" class="q-my-sm">
               <div class="row text-body2">
                 <span class="class-dot" :style="{ background: c.color, marginTop: '5px' }" />{{ c.label }}
                 <q-space />{{ stats?.annotations_per_class[c.name] ?? 0 }}
-                <span v-if="stats?.hard_negatives_per_class?.[c.name]" class="text-grey-7 q-ml-sm">
+                <span v-if="stats?.hard_negatives_per_class?.[c.name]" class="text-muted q-ml-sm">
                   + {{ stats.hard_negatives_per_class[c.name] }} HN
                 </span>
               </div>
-              <q-linear-progress :value="classShare(c.name)" :style="{ color: c.color }" track-color="grey-3" rounded size="8px" />
+              <q-linear-progress :value="classShare(c.name)" :style="{ color: c.color }" track-color="track" rounded size="8px" />
             </div>
-            <div class="text-caption text-grey-7 q-mt-md">
-              Split: {{ stats?.splits.train ?? 0 }} train / {{ stats?.splits.validation ?? 0 }} validation (fest pro Bild zugeordnet)
+            <div class="text-caption text-muted q-mt-md">
+              Split: {{ stats?.splits.train ?? 0 }} train / {{ stats?.splits.validation ?? 0 }} validation (fest pro Bild zugeordnet)<HelpIcon term="split" inline />
             </div>
           </q-card-section>
         </q-card>
@@ -58,9 +60,11 @@
             <div class="text-h6">Schnelltest <span class="text-caption mono">POST /api/v1/detect</span></div>
             <q-space />
             <ModelSelector v-model="opts.model" style="min-width: 260px" />
-            <q-select v-model="opts.input_size" :options="models.inputSizes" dense outlined label="Auflösung" style="min-width: 140px" />
+            <q-select v-model="opts.input_size" :options="models.inputSizes" dense outlined label="Auflösung" style="min-width: 160px">
+              <template #append><HelpIcon term="resolution" /></template>
+            </q-select>
             <div style="width: 180px">
-              <div class="text-caption">Confidence {{ opts.confidence.toFixed(2) }}</div>
+              <div class="text-caption">Confidence {{ opts.confidence.toFixed(2) }}<HelpIcon term="confidence" inline /></div>
               <q-slider v-model="opts.confidence" :min="0.05" :max="0.95" :step="0.05" dense />
             </div>
             <q-file v-model="file" dense outlined accept="image/*" label="Bild wählen" style="min-width: 220px" @update:model-value="detect">
@@ -90,6 +94,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useQuasar } from 'quasar'
 import DetectionOverlay from '@/components/DetectionOverlay.vue'
+import HelpIcon from '@/components/HelpIcon.vue'
 import MetricsTable from '@/components/MetricsTable.vue'
 import ModelSelector from '@/components/ModelSelector.vue'
 import { api, errorMessage, fmtDate, type DatasetStats, type DetectResponse } from '@/services/api'
@@ -112,13 +117,14 @@ const opts = reactive({ model: 'production', input_size: '1536x864', confidence:
 
 const cards = computed(() => [
   { label: 'Trainingsbilder', value: stats.value?.images_total ?? '–', hint: 'in Garage S3' },
-  { label: 'Annotiert', value: stats.value?.images_labeled ?? '–', hint: `davon ${stats.value?.images_negative ?? 0} negativ (ohne Objekte)` },
+  { label: 'Annotiert', help: 'negative' as const, value: stats.value?.images_labeled ?? '–', hint: `davon ${stats.value?.images_negative ?? 0} negativ (ohne Objekte)` },
   {
     label: 'Offen',
+    help: 'needsReview' as const,
     value: stats.value?.images_unlabeled ?? '–',
     hint: `noch nicht bearbeitet · ${stats.value?.images_needs_review ?? 0} nachzuprüfen (neue Klassen)`,
   },
-  { label: 'Modellversionen', value: models.versions.length, hint: `${models.versions.filter((m) => m.status === 'candidate').length} Candidates` },
+  { label: 'Modellversionen', help: 'status' as const, value: models.versions.length, hint: `${models.versions.filter((m) => m.status === 'candidate').length} Candidates` },
 ])
 
 function classShare(name: string) {

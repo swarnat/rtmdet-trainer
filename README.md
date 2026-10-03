@@ -271,15 +271,31 @@ Migrationen: Alembic (`backend/alembic`), werden beim Start der API automatisch 
 ## Projektstruktur
 
 ```
-docker-compose.yml, docker-compose.gpu.yml, .env.example
+docker-compose.yml, docker-compose.gpu.yml, docker-compose.dev.yml, .env.example, Makefile
 common/odcore/        gemeinsamer Code: Klassen, Geometrie/Letterboxing, ORM, S3, OpenVINO-Detector
 backend/              FastAPI (app/api/routes, core, db, schemas, services), Alembic, requirements.lock
 trainer/              RQ-Worker, Snapshot, Training, Evaluation, ONNX/OpenVINO-Export, rtmdet/ Config
 frontend/             Vue 3 + Vite + Quasar + vue-konva
+inference-server/     eigenständiger Produktiv-Stack: Erkennungs-API, Modell per API austauschbar (siehe inference-server/README.md)
 infrastructure/garage garage.toml, idempotentes init.sh (Admin-API)
 scripts/              generate-env.sh, wait-for-services.sh, bootstrap-model.py
 tests/                backend/ (Geometrie, Annotation, Detection-API, Modelle), trainer/, integration/
 ```
+
+## Produktivsystem (Inference-Server)
+
+`inference-server/` ist ein eigener Stack (eigenes Dockerfile und `docker-compose.yml`, Image `swarnat/rtmdet-detection`, gebaut mit `make inference-server`) für den produktiven Einsatz:
+`POST /api/v1/detect` prüft ein Bild mit dem aktiven Modell und liefert Erkennungen und Kategorien als JSON
+(Mindest-Confidence 0.15). Das Image enthält kein Modell; es wird von hier aus übertragen:
+
+1. Inference-Server starten (siehe `inference-server/README.md`), dort `MODEL_UPLOAD_KEY` setzen.
+2. Hier unter **Einstellungen → Produktivsystem** URL und denselben Access Key eintragen (der Key wird nach dem
+   Speichern nicht mehr angezeigt), „Verbindung testen“.
+3. Auf der Seite **Modelle** beim gewünschten Modell „Ausrollen“ (Wolken-Symbol). Das Produktivsystem prüft das Modell
+   und ersetzt dann sein aktives Modell; die Spalte Status zeigt „live“ beim dort aktiven Modell.
+
+API: `GET /api/v1/deployment` (Status des Produktivsystems), `POST /api/v1/deployment {"version": "model-0005"}`.
+Der Production-Status hier im System ist davon unabhängig.
 
 ## Tests
 
@@ -290,13 +306,25 @@ docker compose run --rm --no-deps api python -m pytest -q
 # Trainer: COCO-Snapshot inkl. Negativbilder, Precision/Recall, MMDetection-Config
 docker compose run --rm --no-deps trainer python -m pytest -q /srv/tests/trainer
 
+# Inference-Server (Produktivsystem)
+make inference-server-test
+
 # Integration gegen den laufenden Stack
 docker compose run --rm --no-deps -e OD_BASE_URL=http://frontend api python -m pytest -q /srv/tests/integration
 ```
 
 ## Entwicklung
 
-* Frontend mit Hot Reload: `cd frontend && npm ci && VITE_API_PROXY=http://localhost:8000 npm run dev`
+* **Dev-Modus mit automatischem Neuladen** (`docker-compose.dev.yml`): API (`uvicorn --reload`, Quellcode aus `backend/` und `common/` gemountet) und Frontend (Vite-Dev-Server mit Hot Reload statt nginx-Build) übernehmen Dateiänderungen sofort, ohne Image-Build. Gleiche Ports wie im normalen Stack.
+  ```bash
+  # dauerhaft: in .env die Datei an COMPOSE_FILE anhängen
+  COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml:docker-compose.dev.yml
+  docker compose up -d
+  # zurück zum normalen Stack: Eintrag wieder entfernen, dann
+  docker compose up -d --build
+  ```
+  Neue Alembic-Migrationen laufen nur beim Containerstart (`docker compose restart api`). Der Trainer lädt nicht automatisch neu (`docker compose up -d --build trainer`). Werden Änderungen nicht erkannt (z. B. Quellcode auf einem Windows-Laufwerk), `VITE_USE_POLLING=true` in `.env` setzen.
+* Frontend mit Hot Reload ohne Docker: `cd frontend && npm ci && VITE_API_PROXY=http://localhost:8000 npm run dev`
 * Python-Abhängigkeiten: direkte Abhängigkeiten in `pyproject.toml` (exakt gepinnt), vollständiger Satz in `requirements.lock` (wird in den Dockerfiles als Constraints-Datei verwendet). Node: `package.json` (exakt) + `package-lock.json`.
 * Versionen: Python 3.11 (API), Python 3.10 + PyTorch 2.1.2/CUDA 12.1 + MMCV 2.1.0 + MMDetection 3.3.0 + MMEngine 0.10.5 (Trainer), OpenVINO 2024.6 (beide), Vue 3.5, Quasar 2.17, Vite 6, Konva 9.
 

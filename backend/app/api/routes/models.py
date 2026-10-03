@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -115,6 +115,34 @@ def archive_model(version: str, session: Session = Depends(get_db)) -> ModelVers
     except ValueError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     return to_out(mv)
+
+
+@router.delete(
+    "/{version}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a model version",
+    description="Removes the version and its artifacts under s3://models/<version>/ (a shared COCO base checkpoint is kept). "
+    "Not possible for the production model or while a training run or batch test uses the version.",
+)
+def delete_model(
+    version: str,
+    session: Session = Depends(get_db),
+    storage: ObjectStorage = Depends(get_storage),
+    registry: ModelRegistry = Depends(get_registry),
+) -> Response:
+    mv = get_or_404(session, version)
+    try:
+        repo.delete(session, mv)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    # The row is gone first: if S3 fails, only unreferenced files remain.
+    try:
+        removed = storage.delete_prefix(storage.settings.bucket_models, f"{version}/")
+        log.info("deleted model %s (%d artifact files)", version, removed)
+    except Exception:
+        log.warning("model %s deleted, but its artifacts could not be removed from S3", version, exc_info=True)
+    registry.forget(version)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/{version}/artifacts/{artifact}", summary="Download a model artifact")

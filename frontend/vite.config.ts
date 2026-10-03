@@ -14,6 +14,8 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: { '/api': { target: apiTarget, changeOrigin: true } },
+    // docker-compose.dev.yml: polling for mounts without inotify events
+    watch: process.env.VITE_USE_POLLING === 'true' ? { usePolling: true, interval: 300 } : undefined,
   },
   build: { chunkSizeWarningLimit: 1500 },
 })

@@ -135,6 +135,13 @@ class ModelRegistry:
                     log.info("evicting compiled model %s", evicted)
             return det
 
+    def forget(self, version: str) -> None:
+        """Drop compiled models and downloaded files of a deleted version."""
+        with self._lock:
+            for key in [k for k in self._compiled if k[0] == version]:
+                del self._compiled[key]
+        shutil.rmtree(os.path.join(self.cache_dir, version), ignore_errors=True)
+
     def loaded(self) -> list[dict]:
         with self._lock:
             return [{"version": v, "input_width": w, "input_height": h} for (v, w, h) in self._compiled]

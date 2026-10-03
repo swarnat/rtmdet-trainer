@@ -23,12 +23,13 @@ dependencies = [
     "numpy==1.26.4",
     "opencv-python-headless==4.10.0.84",
     "openvino==2024.6.0",
+    # model upload to the production detection API (inference-server)
+    "httpx==0.28.1",
 ]
 
 [project.optional-dependencies]
 test = [
     "pytest==8.3.4",
-    "httpx==0.28.1",
 ]
 
 [tool.setuptools.packages.find]

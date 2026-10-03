@@ -290,6 +290,17 @@ export type Settings = Record<string, unknown> & {
   hard_negative_min_crop_fraction: number
   hard_negative_oversample: number
   default_base_model: string
+  deployment_url: string
+  /** write-only: '********' when set, '' when not set */
+  deployment_access_key: string
+}
+
+export interface DeploymentStatus {
+  configured: boolean
+  url: string | null
+  reachable: boolean
+  model: { version: string; architecture: string | null; class_names: string[]; input_width: number; input_height: number; installed_at: string | null } | null
+  error: string | null
 }
 
 export class ApiError extends Error {
@@ -395,6 +406,7 @@ export const api = {
   listModels: () => request<ModelVersion[]>('/models'),
   activateModel: (version: string) => request<ModelVersion>(`/models/${version}/activate`, { method: 'POST' }),
   archiveModel: (version: string) => request<ModelVersion>(`/models/${version}/archive`, { method: 'POST' }),
+  deleteModel: (version: string) => request<void>(`/models/${version}`, { method: 'DELETE' }),
   updateModelNotes: (version: string, notes: string) => request<ModelVersion>(`/models/${version}`, json('PATCH', { notes })),
   bootstrapModel: (force = false, baseModel = 'rtmdet-s-coco') =>
     request<{ job_id: string }>(`/models/bootstrap?force=${force}&base_model=${encodeURIComponent(baseModel)}`, { method: 'POST' }),
@@ -417,6 +429,10 @@ export const api = {
     request<DetectionClass>(`/classes/${name}`, json('PATCH', body)),
   reorderClasses: (names: string[]) => request<DetectionClass[]>('/classes/order', json('PUT', { names })),
   deleteClass: (name: string) => request<void>(`/classes/${name}`, { method: 'DELETE' }),
+
+  // production system (inference-server)
+  deploymentStatus: () => request<DeploymentStatus>('/deployment'),
+  deployModel: (version: string) => request<{ version: string }>('/deployment', json('POST', { version })),
 
   // settings
   getSettings: () => request<{ values: Settings; defaults: Settings }>('/settings'),

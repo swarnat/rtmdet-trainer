@@ -19,21 +19,21 @@
         ]"
       />
       <div class="row items-center no-wrap q-gutter-x-sm">
-        <q-btn color="primary" icon="upload" label="Hochladen" no-caps class="col" :loading="uploading" @click="fileInput?.click()" />
-        <q-btn color="deep-purple" icon="playlist_play" label="Batch-Test" no-caps class="col" @click="batchDialog = true">
+        <q-btn color="primary" icon="upload" label="Hochladen" dense no-caps no-wrap class="col q-py-xs" :loading="uploading" @click="fileInput?.click()" />
+        <q-btn color="secondary" icon="playlist_play" label="Batch-Test" dense no-caps no-wrap class="col q-py-xs" @click="batchDialog = true">
           <q-tooltip>Modell auf allen offenen Bildern testen und Vorschläge speichern</q-tooltip>
         </q-btn>
         <q-btn flat round dense icon="refresh" @click="reload"><q-tooltip>Neu laden</q-tooltip></q-btn>
       </div>
       <div v-if="runningBatch" class="cursor-pointer" @click="batchDialog = true">
-        <div class="text-caption text-deep-purple">
+        <div class="text-caption text-secondary">
           Batch-Test #{{ runningBatch.id }} läuft: {{ runningBatch.processed }} / {{ runningBatch.total }}
         </div>
-        <q-linear-progress :value="runningBatch.total ? runningBatch.processed / runningBatch.total : 0" color="deep-purple" rounded />
+        <q-linear-progress :value="runningBatch.total ? runningBatch.processed / runningBatch.total : 0" color="secondary" rounded />
       </div>
       <BatchTestDialog v-model="batchDialog" @running="(b) => (runningBatch = b)" @finished="onBatchFinished" />
       <input ref="fileInput" type="file" accept="image/jpeg,image/png,image/webp,image/bmp" multiple hidden @change="onFiles" />
-      <div class="text-caption text-grey-7">{{ total }} Bilder</div>
+      <div class="text-caption text-muted">{{ total }} Bilder</div>
     </div>
     <q-separator />
     <q-scroll-area class="col" @dragover.prevent @drop.prevent="onDrop">
@@ -43,7 +43,7 @@
           :key="img.id"
           clickable
           :active="img.id === selectedId"
-          active-class="bg-blue-1"
+          active-class="bg-active"
           @click="emit('select', img.id)"
         >
           <q-item-section avatar>
@@ -52,19 +52,19 @@
           <q-item-section>
             <q-item-label class="ellipsis">#{{ img.id }} {{ img.original_filename }}</q-item-label>
             <q-item-label caption>
-              <q-badge v-if="img.annotation_status === 'unlabeled'" color="grey-6" label="offen" />
-              <q-badge v-else-if="img.annotation_count === 0" color="purple-6" label="negativ" />
-              <q-badge v-else color="green-7" :label="`${img.annotation_count} Boxen`" />
-              <q-badge v-if="img.suggestion_count != null" color="deep-purple" class="q-ml-xs" :label="`${img.suggestion_count} Vorschl.`">
+              <q-badge v-if="img.annotation_status === 'unlabeled'" outline color="grey-5" label="offen" />
+              <q-badge v-else-if="img.annotation_count === 0" outline color="secondary" label="negativ" />
+              <q-badge v-else outline color="positive" :label="`${img.annotation_count} Boxen`" />
+              <q-badge v-if="img.suggestion_count != null" outline color="secondary" class="q-ml-xs" :label="`${img.suggestion_count} Vorschl.`">
                 <q-tooltip>Vorschläge aus einem Batch-Test</q-tooltip>
               </q-badge>
-              <q-badge v-if="img.hard_negative_count" color="grey-9" class="q-ml-xs" :label="`${img.hard_negative_count} HN`">
+              <q-badge v-if="img.hard_negative_count" outline color="blue-grey-3" class="q-ml-xs" :label="`${img.hard_negative_count} HN`">
                 <q-tooltip>Hard Negatives (bekannte Fehlalarme)</q-tooltip>
               </q-badge>
-              <q-badge v-if="img.needs_review" color="amber-9" class="q-ml-xs" label="prüfen">
+              <q-badge v-if="img.needs_review" outline color="warning" class="q-ml-xs" label="prüfen">
                 <q-tooltip>Noch nicht auf alle aktiven Klassen geprüft</q-tooltip>
               </q-badge>
-              <q-badge v-if="img.dataset_split" outline color="blue-grey" class="q-ml-xs" :label="img.dataset_split === 'train' ? 'train' : 'val'" />
+              <q-badge v-if="img.dataset_split" outline color="primary" class="q-ml-xs" :label="img.dataset_split === 'train' ? 'train' : 'val'" />
             </q-item-label>
           </q-item-section>
         </q-item>
@@ -72,7 +72,7 @@
       <div v-if="items.length < total" class="q-pa-sm text-center">
         <q-btn flat dense no-caps label="Mehr laden" :loading="loading" @click="loadMore" />
       </div>
-      <div v-if="!items.length && !loading" class="q-pa-md text-grey-7 text-center">
+      <div v-if="!items.length && !loading" class="q-pa-md text-muted text-center">
         Keine Bilder. Hochladen per Button oder Drag &amp; Drop.
       </div>
     </q-scroll-area>

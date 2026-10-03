@@ -1,0 +1,51 @@
+# Optional override for development: API and frontend reload automatically on file changes.
+# Enabled via COMPOSE_FILE in .env, e.g.
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml:docker-compose.dev.yml
+# or once:  docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# Same service names and ports as the production stack; remove the file from COMPOSE_FILE
+# and run `docker compose up -d --build` to go back to the built images.
+services:
+  api:
+    # source code from the host instead of the copy in the image
+    volumes:
+      - ./backend:/srv/backend
+      - ./common:/srv/common:ro
+      - ./tests:/srv/tests:ro
+    environment:
+      # shared code from the mount takes precedence over the installed odcore package
+      PYTHONPATH: /srv/common
+    # migrations run on container start only (`docker compose restart api` after adding one)
+    command:
+      - sh
+      - -c
+      - >-
+        alembic upgrade head &&
+        exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers
+        --reload --reload-dir /srv/backend/app --reload-dir /srv/common/odcore
+
+  frontend:
+    # Vite dev server with hot module replacement instead of the nginx build
+    build: !reset null
+    image: node:22-alpine
+    working_dir: /app
+    environment:
+      VITE_API_PROXY: http://api:8000
+      # set to true if file changes are not detected (e.g. sources on a Windows drive)
+      VITE_USE_POLLING: ${VITE_USE_POLLING:-false}
+    volumes:
+      - ./frontend:/app
+      # Linux node_modules inside the container, independent of the host's
+      - frontend-node-modules:/app/node_modules
+    # install dependencies only when package-lock.json changed; listens on port 80 like nginx
+    command:
+      - sh
+      - -c
+      - >-
+        if [ ! -f node_modules/.package-lock.json ] || [ package-lock.json -nt node_modules/.package-lock.json ];
+        then npm ci --no-audit --no-fund; fi &&
+        exec npx vite --host 0.0.0.0 --port 80 --strictPort
+    healthcheck:
+      start_period: 120s
+
+volumes:
+  frontend-node-modules:

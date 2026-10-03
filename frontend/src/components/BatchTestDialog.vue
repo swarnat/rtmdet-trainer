@@ -2,11 +2,11 @@
   <q-dialog :model-value="modelValue" @update:model-value="(v) => emit('update:modelValue', v)">
     <q-card style="width: 560px; max-width: 95vw">
       <q-card-section class="row items-center">
-        <div class="text-h6">Batch-Test</div>
+        <div class="text-h6">Batch-Test<HelpIcon term="batchTest" inline /></div>
         <q-space />
         <q-btn flat round dense icon="close" v-close-popup />
       </q-card-section>
-      <q-card-section class="q-pt-none text-body2 text-grey-8">
+      <q-card-section class="q-pt-none text-body2 text-muted">
         Testet ein Modell einmal auf allen offenen Bildern und speichert die Erkennungen als <b>Vorschläge</b>. Beim Öffnen eines Bildes
         erscheinen sie als Predictions zum Übernehmen oder als Hard Negative markieren. Annotationen werden nicht verändert; vorhandene
         Vorschläge der betroffenen Bilder werden ersetzt.
@@ -16,7 +16,7 @@
         <div class="text-subtitle2">
           Läuft: #{{ active.id }} · {{ active.model_version }} · {{ active.input_width }}×{{ active.input_height }} · ≥ {{ active.confidence }}
         </div>
-        <q-linear-progress :value="active.total ? active.processed / active.total : 0" size="14px" rounded color="deep-purple" class="q-my-sm">
+        <q-linear-progress :value="active.total ? active.processed / active.total : 0" size="14px" rounded color="secondary" class="q-my-sm">
           <div class="absolute-full flex flex-center text-caption text-white">{{ active.processed }} / {{ active.total }}</div>
         </q-linear-progress>
         <div class="text-caption">{{ active.detections }} Vorschläge bisher<span v-if="active.failed_images">, {{ active.failed_images }} Fehler</span></div>
@@ -25,9 +25,11 @@
 
       <q-card-section v-else class="q-pt-none column q-gutter-sm">
         <ModelSelector v-model="form.model" />
-        <q-select v-model="form.input_size" :options="models.inputSizes" dense outlined label="Eingangsauflösung" />
+        <q-select v-model="form.input_size" :options="models.inputSizes" dense outlined label="Eingangsauflösung">
+          <template #append><HelpIcon term="resolution" /></template>
+        </q-select>
         <div>
-          <div class="text-caption">Confidence-Threshold: {{ form.confidence.toFixed(2) }}</div>
+          <div class="text-caption">Confidence-Threshold: {{ form.confidence.toFixed(2) }}<HelpIcon term="confidence" inline /></div>
           <q-slider v-model="form.confidence" :min="0.05" :max="0.95" :step="0.05" dense />
         </div>
         <q-option-group
@@ -38,7 +40,7 @@
             { label: 'Offene Bilder + annotierte Bilder, die für neue Klassen nachzuprüfen sind', value: 'unlabeled_and_review' },
           ]"
         />
-        <q-btn color="deep-purple" icon="playlist_play" label="Batch-Test starten" no-caps :loading="starting" @click="start" />
+        <q-btn color="secondary" icon="playlist_play" label="Batch-Test starten" no-caps :loading="starting" @click="start" />
       </q-card-section>
 
       <q-card-section v-if="history.length" class="q-pt-none">
@@ -48,7 +50,7 @@
             <tr v-for="b in history" :key="b.id">
               <td>#{{ b.id }}</td>
               <td>
-                <q-chip dense square :color="statusColor[b.status]" text-color="white" :label="b.status" />
+                <q-chip dense outline :color="statusColor[b.status]" :label="b.status" />
               </td>
               <td>{{ b.model_version }}</td>
               <td>{{ b.processed }}/{{ b.total }} Bilder</td>
@@ -66,6 +68,7 @@
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useQuasar } from 'quasar'
 import ModelSelector from './ModelSelector.vue'
+import HelpIcon from './HelpIcon.vue'
 import { api, errorMessage, fmtDate, type BatchTest } from '@/services/api'
 import { useModelsStore } from '@/stores/models'
 
@@ -78,7 +81,7 @@ const batches = ref<BatchTest[]>([])
 const starting = ref(false)
 const form = reactive({ model: 'production', input_size: '1536x864', confidence: 0.25, scope: 'unlabeled' })
 const statusColor: Record<string, string> = {
-  queued: 'grey-7', running: 'deep-purple', completed: 'green-7', failed: 'red-7', cancelled: 'orange-8',
+  queued: 'grey-5', running: 'secondary', completed: 'positive', failed: 'negative', cancelled: 'warning',
 }
 
 const active = computed(() => batches.value.find((b) => b.status === 'queued' || b.status === 'running') ?? null)

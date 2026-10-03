@@ -16,15 +16,15 @@
                 <th class="text-left">Farbe</th>
                 <th class="text-left">Name</th>
                 <th class="text-left">Anzeigename</th>
-                <th class="text-left" style="min-width: 260px">COCO-Quellklassen</th>
+                <th class="text-left" style="min-width: 260px">COCO-Quellklassen<HelpIcon term="cocoMapping" inline /></th>
                 <th class="text-right">Boxen</th>
-                <th class="text-right">HN</th>
+                <th class="text-right">HN<HelpIcon term="hn" inline /></th>
                 <th class="text-center">Aktiv</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="(c, i) in classes.all" :key="c.name" :class="{ 'text-grey-6': !c.active }">
+              <tr v-for="(c, i) in classes.all" :key="c.name" :class="{ 'text-muted': !c.active }">
                 <td>
                   <q-btn dense flat round size="sm" icon="arrow_upward" :disable="i === 0" @click="move(i, -1)" />
                   <q-btn dense flat round size="sm" icon="arrow_downward" :disable="i === classes.all.length - 1" @click="move(i, 1)" />
@@ -149,6 +149,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { useQuasar } from 'quasar'
+import HelpIcon from '@/components/HelpIcon.vue'
 import { api, errorMessage, type DetectionClass } from '@/services/api'
 import { useClassesStore } from '@/stores/classes'
 
@@ -217,6 +218,6 @@ onMounted(async () => {
   width: 22px;
   height: 22px;
   min-height: 22px;
-  border: 1px solid rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--app-border-strong);
 }
 </style>

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from odcore.architectures import get_base_model
 from odcore.geometry import parse_input_size
-from odcore.settings_store import DEFAULT_SETTINGS, get_all_settings, set_setting
+from odcore.settings_store import DEFAULT_SETTINGS, SECRET_MASK, SECRET_SETTINGS, get_all_settings, set_setting
 
 from app.core.database import get_db
 from app.schemas.settings import SettingsOut, SettingsUpdate
@@ -48,6 +48,16 @@ def _validate(key: str, value: Any) -> Any:
     if key == "default_base_model":
         get_base_model(str(value))  # raises KeyError for unknown ids
         return value
+    if key == "deployment_url":
+        value = str(value).strip().rstrip("/")
+        if value and not value.startswith(("http://", "https://")):
+            raise ValueError("deployment_url must start with http:// or https://")
+        return value
+    if key == "deployment_access_key":
+        value = str(value).strip()
+        if value and len(value) < 16:
+            raise ValueError("deployment_access_key must have at least 16 characters")
+        return value
     if key == "validation_ratio":
         value = float(value)
         if not 0.0 < value < 1.0:
@@ -56,18 +66,27 @@ def _validate(key: str, value: Any) -> Any:
     return value
 
 
-@router.get("", response_model=SettingsOut, summary="Current settings")
+def _out(session: Session) -> SettingsOut:
+    values = get_all_settings(session)
+    for key in SECRET_SETTINGS:  # secrets are write-only
+        values[key] = SECRET_MASK if values.get(key) else ""
+    return SettingsOut(values=values, defaults=DEFAULT_SETTINGS)
+
+
+@router.get("", response_model=SettingsOut, summary="Current settings (secrets masked)")
 def get_settings(session: Session = Depends(get_db)) -> SettingsOut:
-    return SettingsOut(values=get_all_settings(session), defaults=DEFAULT_SETTINGS)
+    return _out(session)
 
 
 @router.put("", response_model=SettingsOut, summary="Update settings (partial)")
 def update_settings(body: SettingsUpdate, session: Session = Depends(get_db)) -> SettingsOut:
+    # an unchanged masked secret means "keep the stored value"
+    values = {k: v for k, v in body.values.items() if not (k in SECRET_SETTINGS and v == SECRET_MASK)}
     try:
-        cleaned = {k: _validate(k, v) for k, v in body.values.items()}
+        cleaned = {k: _validate(k, v) for k, v in values.items()}
     except (ValueError, TypeError, KeyError) as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     for key, value in cleaned.items():
         set_setting(session, key, value)
     session.commit()
-    return SettingsOut(values=get_all_settings(session), defaults=DEFAULT_SETTINGS)
+    return _out(session)

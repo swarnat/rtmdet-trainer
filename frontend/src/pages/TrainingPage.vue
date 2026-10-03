@@ -6,7 +6,7 @@
         <q-card flat bordered>
           <q-card-section>
             <div class="text-h6">Training starten</div>
-            <div class="text-caption text-grey-7">
+            <div class="text-caption text-muted">
               Das Training läuft im separaten Trainer-Container und blockiert die Inferenz nicht. Neue Modelle werden
               immer als <b>Candidate</b> registriert.
             </div>
@@ -24,6 +24,7 @@
               label="Base Model"
               :hint="baseHint"
             >
+              <template #append><HelpIcon :text="help.base_model" /></template>
               <template #option="scope">
                 <q-item v-bind="scope.itemProps">
                   <q-item-section>
@@ -44,11 +45,19 @@
               dense
               label="Klassen"
               hint="Standard: alle aktiven Klassen"
-            />
-            <q-select v-model="form.input_size" :options="models.inputSizes" outlined dense label="Input Resolution (B×H)" />
+            >
+              <template #append><HelpIcon :text="help.classes" /></template>
+            </q-select>
+            <q-select v-model="form.input_size" :options="models.inputSizes" outlined dense label="Input Resolution (B×H)">
+              <template #append><HelpIcon :text="help.input_size" /></template>
+            </q-select>
             <div class="row q-col-gutter-sm">
-              <q-input v-model.number="form.epochs" type="number" :min="1" :max="1000" outlined dense label="Epochs" class="col-6" />
-              <q-input v-model.number="form.batch_size" type="number" :min="1" :max="128" outlined dense label="Batch Size" class="col-6" />
+              <q-input v-model.number="form.epochs" type="number" :min="1" :max="1000" outlined dense label="Epochs" class="col-6">
+                <template #append><HelpIcon :text="help.epochs" /></template>
+              </q-input>
+              <q-input v-model.number="form.batch_size" type="number" :min="1" :max="128" outlined dense label="Batch Size" class="col-6">
+                <template #append><HelpIcon :text="help.batch_size" /></template>
+              </q-input>
             </div>
             <div class="row q-col-gutter-sm">
               <q-input
@@ -59,8 +68,12 @@
                 label="Learning Rate (optional)"
                 hint="leer = automatisch (0.00025 × Batch/4)"
                 class="col-8"
-              />
-              <q-input v-model.number="form.num_workers" type="number" :min="0" :max="32" outlined dense label="Loader-Worker" class="col-4" />
+              >
+                <template #append><HelpIcon :text="help.learning_rate" /></template>
+              </q-input>
+              <q-input v-model.number="form.num_workers" type="number" :min="0" :max="32" outlined dense label="Loader-Worker" class="col-4">
+                <template #append><HelpIcon :text="help.num_workers" /></template>
+              </q-input>
             </div>
             <div v-if="elig" class="text-caption">
               Verwendbar: <b>{{ elig.usable.train }}</b> train / <b>{{ elig.usable.validation }}</b> val
@@ -85,15 +98,20 @@
             <q-btn flat round dense icon="refresh" @click="refresh" />
           </q-card-section>
           <q-table :rows="runs" :columns="columns" row-key="id" flat dense :pagination="{ rowsPerPage: 15 }" @row-click="(_e, row) => select(row.id)">
+            <template #header-cell="props">
+              <q-th :props="props">
+                {{ props.col.label }}<HelpIcon v-if="columnHelp[props.col.name]" :term="columnHelp[props.col.name]" inline />
+              </q-th>
+            </template>
             <template #body-cell-status="props">
               <q-td :props="props">
-                <q-chip dense square :color="statusColor[props.row.status]" text-color="white" :label="props.row.status" />
+                <q-chip dense outline :color="statusColor[props.row.status]" :label="props.row.status" />
               </q-td>
             </template>
             <template #body-cell-progress="props">
               <q-td :props="props" style="min-width: 160px">
                 <template v-if="props.row.status === 'running'">
-                  <q-linear-progress :value="(props.row.progress_json?.percent ?? 0) / 100" rounded size="10px" color="blue" />
+                  <q-linear-progress :value="(props.row.progress_json?.percent ?? 0) / 100" rounded size="10px" color="primary" />
                   <div class="text-caption">{{ progressText(props.row) }}</div>
                 </template>
                 <span v-else-if="props.row.status === 'failed'" class="text-negative text-caption ellipsis" style="max-width: 220px; display: inline-block">
@@ -108,7 +126,8 @@
         <q-card v-if="selected" flat bordered class="q-mt-md">
           <q-card-section class="row items-center q-gutter-sm">
             <div class="text-h6">Lauf #{{ selected.id }}</div>
-            <q-chip dense square :color="statusColor[selected.status]" text-color="white" :label="selected.status" />
+            <q-chip dense outline :color="statusColor[selected.status]" :label="selected.status" />
+            <HelpIcon term="runStatus" inline />
             <q-space />
             <q-btn
               v-if="selected.status === 'queued' || selected.status === 'running'"
@@ -124,20 +143,20 @@
           <q-card-section class="q-pt-none">
             <div class="row q-col-gutter-md text-body2">
               <div class="col-12 col-sm-6">
-                <div><b>Base Model:</b> {{ selected.base_model_id }}</div>
+                <div><b>Base Model<HelpIcon term="base" inline />:</b> {{ selected.base_model_id }}</div>
                 <div><b>Klassen:</b> {{ (selected.class_names ?? []).map((n) => classes.info(n).label).join(', ') }}</div>
-                <div><b>Auflösung:</b> {{ selected.input_width }}×{{ selected.input_height }}</div>
-                <div><b>Epochs / Batch:</b> {{ selected.epochs }} / {{ selected.batch_size }}</div>
-                <div><b>Learning Rate:</b> {{ selected.learning_rate ?? 'auto' }}</div>
-                <div><b>Dataset-Snapshot:</b> <span class="mono">{{ selected.dataset_snapshot ?? '–' }}</span></div>
+                <div><b>Auflösung<HelpIcon term="resolution" inline />:</b> {{ selected.input_width }}×{{ selected.input_height }}</div>
+                <div><b>Epochs / Batch<HelpIcon :text="`${GLOSSARY.epoch} ${help.batch_size}`" inline />:</b> {{ selected.epochs }} / {{ selected.batch_size }}</div>
+                <div><b>Learning Rate<HelpIcon :text="help.learning_rate" inline />:</b> {{ selected.learning_rate ?? 'auto' }}</div>
+                <div><b>Dataset-Snapshot<HelpIcon term="datasetSnapshot" inline />:</b> <span class="mono">{{ selected.dataset_snapshot ?? '–' }}</span></div>
               </div>
               <div class="col-12 col-sm-6">
                 <div><b>Erstellt:</b> {{ fmtDate(selected.created_at) }}</div>
                 <div><b>Gestartet:</b> {{ fmtDate(selected.started_at) }}</div>
                 <div><b>Beendet:</b> {{ fmtDate(selected.finished_at) }}</div>
-                <div v-if="selected.progress_json?.phase"><b>Phase:</b> {{ selected.progress_json.phase }} {{ progressText(selected) }}</div>
+                <div v-if="selected.progress_json?.phase"><b>Phase<HelpIcon term="loss" inline />:</b> {{ selected.progress_json.phase }} {{ progressText(selected) }}</div>
                 <div v-if="selected.dataset_stats_json">
-                  <b>Daten:</b>
+                  <b>Daten<HelpIcon :text="`${GLOSSARY.split} ${GLOSSARY.hardNegatives}`" inline />:</b>
                   train {{ selected.dataset_stats_json.train?.images }} Bilder / {{ selected.dataset_stats_json.train?.boxes }} Boxen,
                   val {{ selected.dataset_stats_json.validation?.images }} / {{ selected.dataset_stats_json.validation?.boxes }}
                   <span v-if="selected.dataset_stats_json.excluded_needs_review">
@@ -156,19 +175,15 @@
               size="14px"
               rounded
               class="q-mt-sm"
-              color="blue"
+              color="primary"
             >
               <div class="absolute-full flex flex-center text-caption text-white">{{ selected.progress_json?.percent ?? 0 }} %</div>
             </q-linear-progress>
             <div v-if="selected.error" class="text-negative q-mt-sm mono text-caption">{{ selected.error }}</div>
           </q-card-section>
-          <q-card-section v-if="valHistory.length" class="q-pt-none">
-            <div class="text-subtitle2">Validierung während des Trainings (MMDetection, COCO-mAP)</div>
-            <div class="row q-gutter-xs text-caption">
-              <q-chip v-for="v in valHistory" :key="v.epoch" dense square>
-                E{{ v.epoch }}: {{ fmtPct(v.bbox_mAP) }} / {{ fmtPct(v.bbox_mAP_50) }}
-              </q-chip>
-            </div>
+          <q-card-section v-if="valHistory.length || selected.status === 'running'" class="q-pt-none">
+            <div class="text-subtitle2">Validierung während des Trainings (MMDetection, COCO-mAP)<HelpIcon term="valChart" inline /></div>
+            <EpochChart :history="valHistory" :max-epochs="selected.epochs" />
           </q-card-section>
           <q-card-section v-if="selected.metrics_json" class="q-pt-none">
             <div class="text-subtitle2 q-mb-xs">Metriken des exportierten Modells</div>
@@ -191,7 +206,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useQuasar, type QTableColumn } from 'quasar'
+import EpochChart from '@/components/EpochChart.vue'
+import HelpIcon from '@/components/HelpIcon.vue'
 import MetricsTable from '@/components/MetricsTable.vue'
+import { GLOSSARY, type GlossaryTerm } from '@/glossary'
 import { api, errorMessage, fmtDate, fmtPct, type BaseModelOption, type DatasetStats, type TrainingEligibility, type TrainingRun } from '@/services/api'
 import { useClassesStore } from '@/stores/classes'
 import { useModelsStore } from '@/stores/models'
@@ -218,6 +236,31 @@ const form = reactive({
   class_names: [] as string[],
 })
 const elig = ref<TrainingEligibility | null>(null)
+// explanations for the "?" icons in the start form, in plain language
+const help = {
+  base_model:
+    'Das Modell, mit dem das Training beginnt. Ein „COCO“-Modell kennt schon allgemeine Dinge wie Personen oder Autos und lernt jetzt deine Klassen dazu. ' +
+    'Wählst du ein eigenes, schon trainiertes Modell, wird es mit deinen Bildern weiter verbessert. ' +
+    'Größere Modelle (M) erkennen genauer, sind aber langsamer – kleinere (tiny, S) sind schneller.',
+  classes:
+    'Welche Arten von Objekten das neue Modell erkennen soll, z. B. Person oder Fahrzeug. Normalerweise einfach alle auswählen. ' +
+    'Zum Lernen werden nur Bilder benutzt, die du auf alle ausgewählten Klassen geprüft hast.',
+  input_size:
+    'Auf diese Größe werden die Bilder beim Training gebracht. Größer: kleine oder weit entfernte Objekte werden besser erkannt, ' +
+    'aber Training und Erkennung dauern länger und brauchen mehr Grafikspeicher. Am besten dieselbe Größe wählen, die später bei der Erkennung benutzt wird.',
+  epochs:
+    'Wie oft das Modell alle Trainingsbilder komplett durchgeht. Mehr Durchgänge: es lernt gründlicher, das Training dauert aber länger. ' +
+    'Ab einem gewissen Punkt bringen weitere Durchgänge nichts mehr. 30 ist ein guter Startwert.',
+  batch_size:
+    'Wie viele Bilder gleichzeitig verarbeitet werden. Ein höherer Wert kann das Training beschleunigen, braucht aber mehr Grafikspeicher. ' +
+    'Bricht das Training mit einem Speicherfehler ab, diesen Wert kleiner machen (z. B. 2).',
+  learning_rate:
+    'Wie stark das Modell bei jedem Lernschritt umlernt. Am besten leer lassen – dann wird automatisch ein passender Wert berechnet. ' +
+    'Zu hoch: das Modell lernt unruhig und wird schlechter. Zu niedrig: es lernt sehr langsam.',
+  num_workers:
+    'Wie viele Helfer gleichzeitig die Bilder laden und vorbereiten, damit das Training nicht auf Nachschub warten muss. ' +
+    'Normalerweise 4 lassen. Bei Fehlern oder wenig Arbeitsspeicher kleiner stellen (0–2).',
+}
 const baseHint = computed(() => {
   const b = baseModels.value.find((x) => x.id === form.base_model_id)
   if (!b) return ''
@@ -238,7 +281,8 @@ watch(
   },
 )
 
-const statusColor: Record<string, string> = { queued: 'grey-7', running: 'blue-7', completed: 'green-7', failed: 'red-7' }
+const statusColor: Record<string, string> = { queued: 'grey-5', running: 'primary', completed: 'positive', failed: 'negative' }
+const columnHelp: Record<string, GlossaryTerm> = { status: 'runStatus', base: 'base', res: 'resolution', epochs: 'epoch', map: 'mAP50' }
 const columns: QTableColumn<TrainingRun>[] = [
   { name: 'id', label: '#', field: 'id', align: 'left', sortable: true },
   { name: 'status', label: 'Status', field: 'status', align: 'left' },

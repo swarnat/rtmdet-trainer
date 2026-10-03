@@ -4,12 +4,12 @@
       <thead>
         <tr>
           <th class="text-left">Klasse</th>
-          <th>Precision</th>
-          <th>Recall</th>
-          <th>mAP50</th>
-          <th>mAP50-95</th>
-          <th>mAP50-95 klein</th>
-          <th>TP / FP / FN</th>
+          <th>Precision<HelpIcon term="precision" inline /></th>
+          <th>Recall<HelpIcon term="recall" inline /></th>
+          <th>mAP50<HelpIcon term="mAP50" inline /></th>
+          <th>mAP50-95<HelpIcon term="mAP5095" inline /></th>
+          <th>mAP50-95 klein<HelpIcon term="mAPSmall" inline /></th>
+          <th>TP / FP / FN<HelpIcon term="tpFpFn" inline /></th>
         </tr>
       </thead>
       <tbody>
@@ -36,11 +36,11 @@
     <q-markup-table v-if="metrics.per_size" dense flat bordered separator="cell">
       <thead>
         <tr>
-          <th class="text-left">Boxgröße (Originalpixel)</th>
-          <th>Precision</th>
-          <th>Recall</th>
-          <th>mAP50</th>
-          <th>mAP50-95</th>
+          <th class="text-left">Boxgröße (Originalpixel)<HelpIcon term="boxSize" inline /></th>
+          <th>Precision<HelpIcon term="precision" inline /></th>
+          <th>Recall<HelpIcon term="recall" inline /></th>
+          <th>mAP50<HelpIcon term="mAP50" inline /></th>
+          <th>mAP50-95<HelpIcon term="mAP5095" inline /></th>
         </tr>
       </thead>
       <tbody>
@@ -54,14 +54,14 @@
       </tbody>
     </q-markup-table>
     <template v-if="metrics.hard_negatives && metrics.hard_negatives.overall.total">
-      <div class="text-subtitle2 q-mt-md">Hard-Negative-Regressionstest</div>
+      <div class="text-subtitle2 q-mt-md">Hard-Negative-Regressionstest<HelpIcon term="hardNegatives" inline /></div>
       <q-markup-table dense flat bordered separator="cell">
         <thead>
           <tr>
             <th class="text-left">Klasse</th>
             <th>Hard Negatives</th>
-            <th>weiterhin falsch erkannt</th>
-            <th>HN-FP-Rate</th>
+            <th>weiterhin falsch erkannt<HelpIcon term="hnStillDetected" inline /></th>
+            <th>HN-FP-Rate<HelpIcon term="hnFpRate" inline /></th>
           </tr>
         </thead>
         <tbody>
@@ -77,7 +77,7 @@
             <td class="text-right">{{ b.still_detected }}</td>
             <td class="text-right">{{ fmtPct(b.fp_rate, 2) }}</td>
           </tr>
-          <tr v-if="metrics.hard_negatives.validation_only.total" class="text-grey-8">
+          <tr v-if="metrics.hard_negatives.validation_only.total" class="text-muted">
             <td class="text-left">nur Validierungsbilder (nicht trainiert)</td>
             <td class="text-right">{{ metrics.hard_negatives.validation_only.total }}</td>
             <td class="text-right">{{ metrics.hard_negatives.validation_only.still_detected }}</td>
@@ -85,26 +85,26 @@
           </tr>
         </tbody>
       </q-markup-table>
-      <div class="text-caption text-grey-7">
+      <div class="text-caption text-muted">
         „Weiterhin falsch erkannt“ = gleiche Klasse mit Confidence ≥ {{ metrics.hard_negatives.confidence }} und IoU ≥
         {{ metrics.hard_negatives.iou }} zur gespeicherten Box. Immer zusammen mit Recall/Precision bewerten.
       </div>
     </template>
 
     <template v-if="metrics.comparison">
-      <div class="text-subtitle2 q-mt-md">Vergleich mit {{ metrics.comparison.baseline_model }} (aktuelles Production-Modell, gleiche Daten)</div>
-      <q-banner v-for="w in metrics.comparison.warnings" :key="w" dense rounded class="bg-orange-2 q-mb-xs text-body2">
-        <template #avatar><q-icon name="warning" color="orange-9" /></template>{{ w }}
+      <div class="text-subtitle2 q-mt-md">Vergleich mit {{ metrics.comparison.baseline_model }} (aktuelles Production-Modell, gleiche Daten)<HelpIcon term="delta" inline /></div>
+      <q-banner v-for="w in metrics.comparison.warnings" :key="w" dense rounded class="bg-amber-soft q-mb-xs text-body2">
+        <template #avatar><q-icon name="warning" color="warning" /></template>{{ w }}
       </q-banner>
       <q-markup-table dense flat bordered separator="cell">
         <thead>
           <tr>
             <th class="text-left">Klasse</th>
-            <th>Recall Δ</th>
-            <th>Precision Δ</th>
-            <th>mAP50 Δ</th>
-            <th>mAP50-95 Δ</th>
-            <th>HN-FP-Rate Δ</th>
+            <th>Recall Δ<HelpIcon term="recall" inline /></th>
+            <th>Precision Δ<HelpIcon term="precision" inline /></th>
+            <th>mAP50 Δ<HelpIcon term="mAP50" inline /></th>
+            <th>mAP50-95 Δ<HelpIcon term="mAP5095" inline /></th>
+            <th>HN-FP-Rate Δ<HelpIcon term="hnFpRate" inline /></th>
           </tr>
         </thead>
         <tbody>
@@ -118,22 +118,23 @@
           </tr>
         </tbody>
       </q-markup-table>
-      <div class="text-caption text-grey-7">
+      <div class="text-caption text-muted">
         Δ in Prozentpunkten (neu − {{ metrics.comparison.baseline_model }}); grün = besser. Nur Klassen, die beide Modelle kennen.
       </div>
     </template>
 
-    <div class="text-caption text-grey-7 q-mt-xs">
+    <div class="text-caption text-muted q-mt-xs">
       {{ metrics.num_images }} Validierungsbilder, {{ metrics.num_boxes }} Boxen · ausgewertet mit {{ metrics.evaluated_with }}
       bei {{ metrics.input_size }} · Precision/Recall bei Confidence ≥ {{ metrics.confidence_for_pr }} und IoU 0.5
       <span v-if="metrics.note"> · {{ metrics.note }}</span>
     </div>
   </div>
-  <div v-else class="text-grey-7">Keine Metriken vorhanden.</div>
+  <div v-else class="text-muted">Keine Metriken vorhanden.</div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import HelpIcon from './HelpIcon.vue'
 import { fmtPct, type MetricSet, type Metrics } from '@/services/api'
 import { useClassesStore } from '@/stores/classes'
 

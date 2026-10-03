@@ -48,7 +48,7 @@
     </div>
     <div class="canvas-hud text-caption">
       {{ Math.round((view.scale / fitScale) * 100) }}% · Ziehen = neue Box · Mausrad = Zoom · Leertaste/Mitteltaste/Rechtsklick + Ziehen = verschieben
-      <q-btn dense flat size="sm" color="white" icon="fit_screen" label="Einpassen" @click="fit" />
+      <q-btn dense flat size="sm" class="text-muted" icon="fit_screen" label="Einpassen" @click="fit" />
     </div>
   </div>
 </template>
@@ -281,17 +281,20 @@ defineExpose({ fit })
   position: relative;
   width: 100%;
   height: 100%;
-  background: #263238;
+  background-color: var(--app-bg);
+  background-image: linear-gradient(var(--app-border) 1px, transparent 1px), linear-gradient(90deg, var(--app-border) 1px, transparent 1px);
+  background-size: 24px 24px;
   overflow: hidden;
   user-select: none;
 }
 .canvas-hud {
   position: absolute;
-  left: 8px;
-  bottom: 6px;
-  color: #cfd8dc;
-  background: rgba(0, 0, 0, 0.45);
-  padding: 2px 8px;
-  border-radius: 4px;
+  left: 16px;
+  bottom: 16px;
+  color: var(--app-muted);
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+  padding: 4px 4px 4px 12px;
+  border-radius: 8px;
 }
 </style>

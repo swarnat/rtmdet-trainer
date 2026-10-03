@@ -1,7 +1,7 @@
 <template>
   <q-page :style-fn="pageStyle" class="row no-wrap">
     <!-- left: image browser -->
-    <div class="browser-col bg-white">
+    <div class="browser-col bg-panel">
       <ImageBrowser
         ref="browser"
         :selected-id="imageId"
@@ -14,7 +14,7 @@
     <!-- center: canvas -->
     <div class="col column no-wrap">
       <!-- fixed height: a wrapping toolbar would resize/refit the canvas while editing -->
-      <div class="toolbar row items-center q-px-sm bg-grey-2 q-gutter-x-sm no-wrap">
+      <div class="toolbar row items-center q-px-md bg-panel-soft q-gutter-x-sm no-wrap">
         <q-btn dense flat icon="chevron_left" :disable="!neighbours.previous" @click="go(neighbours.previous)">
           <q-tooltip>Vorheriges Bild (Bild ↑)</q-tooltip>
         </q-btn>
@@ -23,12 +23,12 @@
         </q-btn>
         <div v-if="store.image" class="col text-body2 ellipsis" style="min-width: 0">
           <b>#{{ store.image.id }}</b> {{ store.image.original_filename }} · {{ store.image.width }}×{{ store.image.height }}
-          <q-badge :color="store.image.annotation_status === 'labeled' ? 'green-7' : 'grey-6'" class="q-ml-sm">
+          <q-badge outline :color="store.image.annotation_status === 'labeled' ? 'positive' : 'grey-5'" class="q-ml-sm">
             {{ store.image.annotation_status === 'labeled' ? (store.image.annotation_count ? 'annotiert' : 'negativ') : 'offen' }}
           </q-badge>
-          <q-badge v-if="store.image.dataset_split" outline color="blue-grey" class="q-ml-xs">{{ store.image.dataset_split }}</q-badge>
-          <q-badge v-if="store.image.needs_review" color="amber-9" class="q-ml-xs">nachprüfen</q-badge>
-          <q-badge v-if="store.dirty" color="orange-8" class="q-ml-xs">ungespeichert</q-badge>
+          <q-badge v-if="store.image.dataset_split" outline color="primary" class="q-ml-xs">{{ store.image.dataset_split }}</q-badge><HelpIcon v-if="store.image.dataset_split" term="split" inline />
+          <q-badge v-if="store.image.needs_review" outline color="warning" class="q-ml-xs">nachprüfen</q-badge><HelpIcon v-if="store.image.needs_review" term="needsReview" inline />
+          <q-badge v-if="store.dirty" outline color="orange-4" class="q-ml-xs">ungespeichert</q-badge>
         </div>
         <q-space v-if="!store.image" />
         <!-- few classes: buttons, many classes: dropdown (shortcuts 1-9 work in both cases) -->
@@ -94,21 +94,21 @@
           @create="(c) => store.addBox({ ...c, class: store.activeClass, type: 'positive', source: 'manual' })"
           @accept="(id) => store.acceptPrediction(id)"
         />
-        <div v-else class="absolute-center text-grey-6 text-h6">Bild links auswählen oder hochladen</div>
+        <div v-else class="absolute-center text-muted text-h6">Bild links auswählen oder hochladen</div>
       </div>
     </div>
 
     <!-- right: boxes, test function -->
-    <div class="side-col bg-white column no-wrap">
+    <div class="side-col bg-panel column no-wrap">
       <q-scroll-area class="col">
-        <div class="q-pa-sm">
-          <q-banner v-if="store.image?.needs_review" dense rounded class="bg-amber-2 text-body2 q-mb-sm">
-            <template #avatar><q-icon name="fact_check" color="amber-9" /></template>
+        <div class="q-pa-md">
+          <q-banner v-if="store.image?.needs_review" dense rounded class="bg-amber-soft text-body2 q-mb-sm">
+            <template #avatar><q-icon name="fact_check" color="warning" /></template>
             Noch nicht geprüft auf: <b>{{ missingClasses.map((c) => classes.info(c).label).join(', ') }}</b>.
             Bild auf diese Klassen prüfen und speichern – erst dann wird es für Trainings mit diesen Klassen verwendet.
           </q-banner>
           <div class="text-subtitle2 q-mb-xs">Annotationen ({{ positives.length }})</div>
-          <div v-if="store.image && !positives.length" class="text-caption text-grey-7 q-mb-sm">
+          <div v-if="store.image && !positives.length" class="text-caption text-muted q-mb-sm">
             Keine Objekte. Speichern markiert das Bild als <b>negatives Trainingsbild</b>.
           </div>
           <q-list v-if="positives.length" dense bordered separator class="rounded-borders">
@@ -117,14 +117,14 @@
               :key="b.uid"
               clickable
               :active="b.uid === store.selectedId"
-              active-class="bg-blue-1"
+              active-class="bg-active"
               @click="store.selectedId = b.uid"
             >
               <q-item-section avatar style="min-width: 24px">
                 <span class="class-dot" :style="{ background: classes.info(b.class).color }" />
               </q-item-section>
               <q-item-section>
-                <q-item-label>{{ i + 1 }}. {{ classes.info(b.class).label }}<span v-if="b.source === 'prediction'" class="text-grey-6"> (übernommen)</span></q-item-label>
+                <q-item-label>{{ i + 1 }}. {{ classes.info(b.class).label }}<span v-if="b.source === 'prediction'" class="text-muted"> (übernommen)</span></q-item-label>
                 <q-item-label caption class="mono">
                   {{ Math.round(b.x1) }},{{ Math.round(b.y1) }} – {{ Math.round(b.x2) }},{{ Math.round(b.y2) }}
                 </q-item-label>
@@ -138,12 +138,7 @@
           <template v-if="hardNegatives.length">
             <div class="text-subtitle2 q-mt-md q-mb-xs">
               Hard Negatives ({{ hardNegatives.length }})
-              <q-icon name="help_outline" size="xs" color="grey-7">
-                <q-tooltip max-width="320px">
-                  Bekannte Fehlalarme: Regionen, die ein Modell fälschlich als diese Klasse erkannt hat. Sie werden nicht als eigene Klasse
-                  trainiert, sondern als Hintergrund-Ausschnitte (oversampled) und nach jedem Training als Regressionstest geprüft.
-                </q-tooltip>
-              </q-icon>
+              <HelpIcon term="hardNegatives" inline />
             </div>
             <q-list dense bordered separator class="rounded-borders">
               <q-item
@@ -151,7 +146,7 @@
                 :key="b.uid"
                 clickable
                 :active="b.uid === store.selectedId"
-                active-class="bg-grey-4"
+                active-class="bg-hn-active"
                 @click="store.selectedId = b.uid"
               >
                 <q-item-section avatar style="min-width: 24px">
@@ -172,20 +167,22 @@
 
           <q-separator class="q-my-md" />
 
-          <div class="text-subtitle2 q-mb-sm">Modell testen</div>
+          <div class="text-subtitle2 q-mb-sm">Modell testen<HelpIcon term="predictions" inline /></div>
           <div class="column q-gutter-sm">
             <ModelSelector v-model="test.model" />
-            <q-select v-model="test.inputSize" :options="models.inputSizes" dense outlined label="Eingangsauflösung" />
+            <q-select v-model="test.inputSize" :options="models.inputSizes" dense outlined label="Eingangsauflösung">
+              <template #append><HelpIcon term="resolution" /></template>
+            </q-select>
             <div>
-              <div class="text-caption">Confidence-Threshold: {{ test.confidence.toFixed(2) }}</div>
+              <div class="text-caption">Confidence-Threshold: {{ test.confidence.toFixed(2) }}<HelpIcon term="confidence" inline /></div>
               <q-slider v-model="test.confidence" :min="0.05" :max="0.95" :step="0.05" dense />
             </div>
-            <q-btn color="deep-purple" icon="science" label="Modell testen" no-caps :loading="testing" :disable="!store.image" @click="runTest" />
+            <q-btn color="secondary" icon="science" label="Modell testen" no-caps :loading="testing" :disable="!store.image" @click="runTest" />
           </div>
 
           <template v-if="store.lastDetection">
-            <q-banner v-if="store.fromSuggestion" dense rounded class="bg-deep-purple-1 text-body2 q-mt-sm">
-              <template #avatar><q-icon name="playlist_add_check" color="deep-purple" /></template>
+            <q-banner v-if="store.fromSuggestion" dense rounded class="bg-violet-soft text-body2 q-mt-sm">
+              <template #avatar><q-icon name="playlist_add_check" color="secondary" /></template>
               Vorschläge aus Batch-Test #{{ store.fromSuggestion.batch_id }} ({{ store.fromSuggestion.model_version }},
               {{ store.fromSuggestion.input_width }}×{{ store.fromSuggestion.input_height }}, ≥ {{ store.fromSuggestion.confidence }}).
               <span v-if="store.fromSuggestion.detections.length > store.predictions.length">
@@ -193,7 +190,7 @@
               </span>
               Beim Speichern werden die restlichen Vorschläge verworfen.
             </q-banner>
-            <div v-else class="text-caption text-grey-8 q-mt-sm">
+            <div v-else class="text-caption text-muted q-mt-sm">
               {{ store.lastDetection.model.version }} ({{ store.lastDetection.model.status }}) ·
               {{ store.lastDetection.model.input_width }}×{{ store.lastDetection.model.input_height }} ·
               {{ store.lastDetection.inference_ms.toFixed(0) }} ms · {{ store.lastDetection.detections.length }} Treffer
@@ -208,7 +205,7 @@
                 dense
                 outline
                 no-caps
-                color="deep-purple"
+                color="secondary"
                 icon="check"
                 label="Prediction übernehmen"
                 class="col"
@@ -221,7 +218,7 @@
                 dense
                 unelevated
                 no-caps
-                color="deep-purple"
+                color="secondary"
                 icon="done_all"
                 label="Alle übernehmen"
                 class="col"
@@ -233,7 +230,7 @@
               dense
               outline
               no-caps
-              color="grey-9"
+              color="blue-grey-3"
               icon="block"
               label="Als False Positive / Hard Negative markieren"
               class="full-width q-mt-xs"
@@ -248,7 +245,7 @@
                 :key="p.uid"
                 clickable
                 :active="p.uid === store.selectedId"
-                active-class="bg-deep-purple-1"
+                active-class="bg-violet-soft"
                 @click="store.selectedId = p.uid"
                 @dblclick="store.acceptPrediction(p.uid)"
               >
@@ -261,10 +258,10 @@
                 </q-item-section>
                 <q-item-section side>
                   <div class="row no-wrap">
-                    <q-btn dense flat round size="sm" icon="add_task" color="deep-purple" :disable="!store.acceptable(p)" @click.stop="store.acceptPrediction(p.uid)">
+                    <q-btn dense flat round size="sm" icon="add_task" color="secondary" :disable="!store.acceptable(p)" @click.stop="store.acceptPrediction(p.uid)">
                       <q-tooltip>Übernehmen</q-tooltip>
                     </q-btn>
-                    <q-btn dense flat round size="sm" icon="block" color="grey-9" :disable="!store.acceptable(p)" @click.stop="store.markHardNegative(p.uid)">
+                    <q-btn dense flat round size="sm" icon="block" color="blue-grey-3" :disable="!store.acceptable(p)" @click.stop="store.markHardNegative(p.uid)">
                       <q-tooltip>Als False Positive / Hard Negative markieren</q-tooltip>
                     </q-btn>
                   </div>
@@ -311,6 +308,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import AnnotationCanvas from '@/components/AnnotationCanvas.vue'
+import HelpIcon from '@/components/HelpIcon.vue'
 import ImageBrowser from '@/components/ImageBrowser.vue'
 import ModelSelector from '@/components/ModelSelector.vue'
 import { api, errorMessage } from '@/services/api'
@@ -563,18 +561,19 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .toolbar {
-  height: 44px;
-  min-height: 44px;
+  height: 56px;
+  min-height: 56px;
+  border-bottom: 1px solid var(--app-border);
   overflow: hidden;
 }
 .browser-col {
   width: 320px;
   min-width: 260px;
-  border-right: 1px solid #ddd;
+  border-right: 1px solid var(--app-border);
 }
 .side-col {
   width: 330px;
   min-width: 280px;
-  border-left: 1px solid #ddd;
+  border-left: 1px solid var(--app-border);
 }
 </style>

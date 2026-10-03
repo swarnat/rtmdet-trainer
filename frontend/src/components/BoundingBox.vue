@@ -13,7 +13,7 @@
       @mouseleave="hover = false"
     />
     <v-label :config="{ x: box.x1, y: labelY, listening: false, opacity: prediction && !selected ? 0.8 : 1 }">
-      <v-tag :config="{ fill: hardNegative ? '#111' : color, stroke: hardNegative ? color : undefined, strokeWidth: 1, cornerRadius: 2 / scale }" />
+      <v-tag :config="{ fill: hardNegative ? '#0f172a' : color, stroke: hardNegative ? color : undefined, strokeWidth: 1, cornerRadius: 2 / scale }" />
       <v-text :config="textConfig" />
     </v-label>
   </v-group>
@@ -82,6 +82,7 @@ const textConfig = computed(() => ({
   fontSize: fontSize.value,
   padding: 3 / props.scale,
   fill: 'white',
+  fontFamily: 'Inter, system-ui, sans-serif',
   fontStyle: props.prediction ? 'italic' : 'bold',
 }))
 

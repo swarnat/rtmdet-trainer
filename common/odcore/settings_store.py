@@ -26,7 +26,14 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "hard_negative_min_crop_fraction": 0.25,
     # how often each hard-negative crop appears in the training split
     "hard_negative_oversample": 3,
+    # Production detection API (inference-server): base URL and access key for model uploads ("" = not configured)
+    "deployment_url": "",
+    "deployment_access_key": "",
 }
+
+# Settings whose value is never sent back to clients (replaced by SECRET_MASK when set)
+SECRET_SETTINGS = ("deployment_access_key",)
+SECRET_MASK = "********"
 
 
 def get_setting(session: Session, key: str) -> Any:
