@@ -10,23 +10,14 @@ from odcore.db import ModelStatus, ModelVersion
 
 from app.core.database import get_db
 from app.main import app
-from app.services.model_registry import ModelRegistry, get_registry
+from app.services.model_registry import get_registry
 
-
-class LocalRegistry(ModelRegistry):
-    """Registry whose model files come from a local path instead of S3."""
-
-    def __init__(self, xml_path: str, cache_dir: str):
-        super().__init__(storage=None, cache_dir=cache_dir)  # type: ignore[arg-type]
-        self.xml_path = xml_path
-
-    def local_ir_path(self, ref):  # noqa: D401 - same contract as the parent
-        return self.xml_path
+from conftest import make_local_registry
 
 
 @pytest.fixture()
 def client(tmp_path, session_factory, constant_model_xml):
-    registry = LocalRegistry(constant_model_xml, str(tmp_path / "cache"))
+    registry = make_local_registry(constant_model_xml, str(tmp_path / "cache"))
     with session_factory() as s:
         s.add(ModelVersion(version="model-0001", status=ModelStatus.archived, checkpoint_key="x", onnx_key="x",
                            openvino_key="model-0001/openvino/model.xml", input_width=1536, input_height=864,

@@ -2,7 +2,13 @@
   <q-page :style-fn="pageStyle" class="row no-wrap">
     <!-- left: image browser -->
     <div class="browser-col bg-white">
-      <ImageBrowser ref="browser" :selected-id="imageId" @select="openImage" @filter-change="(s) => (statusFilter = s)" />
+      <ImageBrowser
+        ref="browser"
+        :selected-id="imageId"
+        @select="openImage"
+        @filter-change="(s) => (statusFilter = s)"
+        @batch-finished="reloadCurrentSuggestions"
+      />
     </div>
 
     <!-- center: canvas -->
@@ -178,7 +184,16 @@
           </div>
 
           <template v-if="store.lastDetection">
-            <div class="text-caption text-grey-8 q-mt-sm">
+            <q-banner v-if="store.fromSuggestion" dense rounded class="bg-deep-purple-1 text-body2 q-mt-sm">
+              <template #avatar><q-icon name="playlist_add_check" color="deep-purple" /></template>
+              Vorschläge aus Batch-Test #{{ store.fromSuggestion.batch_id }} ({{ store.fromSuggestion.model_version }},
+              {{ store.fromSuggestion.input_width }}×{{ store.fromSuggestion.input_height }}, ≥ {{ store.fromSuggestion.confidence }}).
+              <span v-if="store.fromSuggestion.detections.length > store.predictions.length">
+                {{ store.fromSuggestion.detections.length - store.predictions.length }} bereits annotiert/übernommen.
+              </span>
+              Beim Speichern werden die restlichen Vorschläge verworfen.
+            </q-banner>
+            <div v-else class="text-caption text-grey-8 q-mt-sm">
               {{ store.lastDetection.model.version }} ({{ store.lastDetection.model.status }}) ·
               {{ store.lastDetection.model.input_width }}×{{ store.lastDetection.model.input_height }} ·
               {{ store.lastDetection.inference_ms.toFixed(0) }} ms · {{ store.lastDetection.detections.length }} Treffer
@@ -426,6 +441,16 @@ async function save(next: boolean) {
     if (next && neighbours.next) openImage(neighbours.next)
   } catch (e) {
     $q.notify({ type: 'negative', message: errorMessage(e) })
+  }
+}
+
+/** After a batch test finished: show new suggestions for the open image (if it has no unsaved edits). */
+async function reloadCurrentSuggestions() {
+  if (!imageId.value || store.dirty) return
+  try {
+    store.load(await api.getImage(imageId.value))
+  } catch {
+    /* image may have been deleted */
   }
 }
 

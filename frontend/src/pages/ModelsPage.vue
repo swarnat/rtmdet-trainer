@@ -87,7 +87,7 @@
 import { onMounted, ref, watch } from 'vue'
 import { useQuasar, type QTableColumn } from 'quasar'
 import MetricsTable from '@/components/MetricsTable.vue'
-import { api, errorMessage, fmtDate, fmtPct, type ModelVersion } from '@/services/api'
+import { api, errorMessage, fmtDate, fmtPct, type CocoBaseModel, type ModelVersion } from '@/services/api'
 import { useClassesStore } from '@/stores/classes'
 import { useModelsStore } from '@/stores/models'
 
@@ -108,6 +108,7 @@ const artifacts = [
 const columns: QTableColumn<ModelVersion>[] = [
   { name: 'version', label: 'Version', field: 'version', align: 'left', sortable: true },
   { name: 'status', label: 'Status', field: 'status', align: 'left' },
+  { name: 'arch', label: 'Architektur', field: 'architecture', align: 'left' },
   { name: 'kind', label: 'Art', field: (m) => (m.kind === 'coco-bootstrap' ? 'COCO' : 'trainiert'), align: 'left' },
   { name: 'classes', label: 'Klassen', field: (m) => m.class_names.join(', '), align: 'left' },
   { name: 'res', label: 'Auflösung', field: (m) => `${m.input_width}×${m.input_height}`, align: 'left' },
@@ -164,18 +165,31 @@ async function saveNotes() {
   }
 }
 
-function bootstrap() {
+async function bootstrap() {
+  let bases: CocoBaseModel[] = []
+  try {
+    bases = await api.cocoBaseModels()
+  } catch (e) {
+    $q.notify({ type: 'negative', message: errorMessage(e) })
+    return
+  }
   $q.dialog({
     title: 'COCO-Basismodell importieren',
     message:
-      'Exportiert den COCO-pretrained RTMDet-S-Checkpoint als neue Modellversion (ohne Training). Enthalten sind alle aktiven Klassen ' +
-      'mit COCO-Mapping. Sinnvoll nach Änderungen unter „Klassen“.',
+      'Exportiert einen COCO-pretrained RTMDet-Checkpoint als neue Modellversion (ohne Training), z. B. um eine andere Modellgröße ' +
+      'mit „Modell testen“ auf den vorhandenen Bildern auszuprobieren. Enthalten sind alle aktiven Klassen mit COCO-Mapping. ' +
+      'Annotationen bleiben unverändert.',
+    options: {
+      type: 'radio',
+      model: models.production?.architecture ? `${models.production.architecture}-coco` : 'rtmdet-s-coco',
+      items: bases.map((b) => ({ label: `${b.label} – COCO AP ${b.coco_ap}, ${b.params_m} M Parameter`, value: b.id })),
+    },
     cancel: { label: 'Abbrechen', flat: true },
     ok: { label: 'Importieren' },
-  }).onOk(async () => {
+  }).onOk(async (baseModel: string) => {
     try {
-      await api.bootstrapModel(true)
-      $q.notify({ type: 'info', message: 'Import im Trainer eingereiht – die neue Version erscheint in ca. 1 Minute.' })
+      await api.bootstrapModel(true, baseModel)
+      $q.notify({ type: 'info', message: 'Import im Trainer eingereiht – die neue Version erscheint in 1–2 Minuten (erster Download des Checkpoints).' })
     } catch (e) {
       $q.notify({ type: 'negative', message: errorMessage(e) })
     }

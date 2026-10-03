@@ -4,11 +4,14 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from odcore.architectures import BaseModel
+
 from .base_config import load_base_config
 
 
 @dataclass(frozen=True)
 class TrainParams:
+    base: BaseModel         # RTMDet size (tiny/S/M)
     data_root: str          # local snapshot dir with annotations/{train,val}.json and images/
     class_names: tuple[str, ...]
     work_dir: str
@@ -35,7 +38,7 @@ def stage2_epochs(epochs: int) -> int:
 
 
 def build_config(p: TrainParams):
-    cfg = load_base_config(num_classes=len(p.class_names))
+    cfg = load_base_config(p.base, num_classes=len(p.class_names))
     w, h = p.input_width, p.input_height
     pad = dict(img=(114, 114, 114))
     metainfo = dict(classes=tuple(p.class_names))

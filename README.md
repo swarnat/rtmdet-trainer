@@ -1,6 +1,6 @@
 # Object Detection Training & Inference
 
-Lokal betreibbare Webanwendung zur Objekterkennung in 16:9-Kamerabildern. Die Klassen sind in der Anwendung konfigurierbar; ausgeliefert wird sie mit **Personen**, **Fahrrädern** und **Fahrzeugen**, inklusive Annotation, manuell gestartetem Nachtraining (RTMDet-S / MMDetection) und Modellverwaltung mit Production/Candidate/Archiv-Versionen. Die Inferenz läuft mit OpenVINO auf der CPU, das Training in einem separaten Container (GPU optional).
+Lokal betreibbare Webanwendung zur Objekterkennung in 16:9-Kamerabildern mit RTMDet (Größen tiny, S, M wählbar). Die Klassen sind in der Anwendung konfigurierbar; ausgeliefert wird sie mit **Personen**, **Fahrrädern** und **Fahrzeugen**, inklusive Annotation, manuell gestartetem Nachtraining (RTMDet-S / MMDetection) und Modellverwaltung mit Production/Candidate/Archiv-Versionen. Die Inferenz läuft mit OpenVINO auf der CPU, das Training in einem separaten Container (GPU optional).
 
 ```
             ┌──────────────┐  /api  ┌──────────────────────────┐        ┌────────────┐
@@ -78,11 +78,27 @@ Die Klassen samt COCO-Mapping werden unter **Klassen** gepflegt (Tabelle `detect
 
 **Hard Negatives:** Erkennt ein Modell etwas fälschlich (z. B. ein Hinweisschild als Person), markiert „Als False Positive / Hard Negative markieren“ (Taste `N` oder ⊘ in der Prediction-Liste) die Region als bekannten Fehlalarm dieser Klasse. Im Canvas erscheinen Hard Negatives abgedunkelt, kurz gestrichelt und mit „⊘ HN“-Label; in der Seitenleiste haben sie eine eigene Liste. Ein Bild nur mit Hard Negatives zählt als negatives Bild. Details unter [Hard Negatives](#hard-negatives).
 
+**Batch-Test:** Der Button „Batch-Test“ über der Bildliste testet ein Modell (Production, Candidate oder eine Version; Auflösung und Confidence wählbar) einmal auf allen offenen Bildern, optional auch auf annotierten Bildern, die für neue Klassen nachzuprüfen sind. Die Erkennungen werden pro Bild als **Vorschläge** gespeichert (Tabelle `image_suggestions`), Annotationen bleiben unverändert. Nach Abschluss zeigt der Filter „Mit Vorschlägen“ die betroffenen Bilder (Badge „n Vorschl.“, „0 Vorschl.“ = Kandidat für ein Negativbild). Beim Öffnen eines Bildes erscheinen die Vorschläge als Predictions; Vorschläge, die eine vorhandene Box gleicher Klasse bereits abdeckt (IoU ≥ 0,5), werden ausgeblendet. Dann wie gewohnt übernehmen, alle übernehmen oder als Hard Negative markieren. Beim Speichern als annotiert werden die restlichen Vorschläge des Bildes verworfen; ein neuer Batch-Test ersetzt ältere Vorschläge. Der Batch-Test läuft im API-Container auf einem Hintergrund-Thread (immer nur einer gleichzeitig, mit Fortschritt und Abbruch) und nutzt dieselben kompilierten OpenVINO-Modelle wie `/detect` (ca. 0,3–0,5 s pro Bild mit RTMDet-S bei 1536×864). Laufende `/detect`-Anfragen teilen sich währenddessen die CPU.
+
 **Modell testen:** Production-Modell, neuesten Candidate oder eine beliebige Version wählen, dazu Eingangsauflösung und Confidence. Die API führt eine normale Detection auf dem gespeicherten Bild aus. Predictions erscheinen gestrichelt, kursiv, mit ⚡ und Confidence und sind so klar von manuellen Annotationen zu unterscheiden. „Prediction übernehmen“ bzw. „Alle übernehmen“ macht daraus normale, editierbare Annotationen (Quelle `prediction`).
 
 ### Klassen (`/classes`)
 
 Klassen hinzufügen, umbenennen (Anzeigename), einfärben, sortieren, deaktivieren oder (ohne Annotationen) löschen sowie das COCO-Mapping pflegen. Details unter [Klassen](#klassen).
+
+### Modellgrößen
+
+Als Basis stehen drei COCO-pretrained RTMDet-Größen zur Wahl (Trainingsdialog „Base Model“; Vorauswahl unter Einstellungen):
+
+| Basis | COCO AP | Parameter | CPU-Inferenz 1536×864* | GPU-Speicher Training (Batch 4, 1536×864)* |
+|-------|---------|-----------|------------------------|---------------------------------------------|
+| `rtmdet-tiny-coco` | 41,1 | 4,8 M | ~250 ms | ~2,3 GB |
+| `rtmdet-s-coco` (Standard) | 44,6 | 8,9 M | ~310–400 ms | ~3,3 GB |
+| `rtmdet-m-coco` | 49,4 | 24,7 M | ~970 ms | ~5,9 GB |
+
+\* gemessen auf i9-12900H (WSL2, OpenVINO CPU) bzw. RTX 3070 Ti Laptop (8 GB).
+
+Annotationen sind modellunabhängig (Originalpixel in PostgreSQL) und bleiben beim Wechsel der Größe unverändert. Zum Ausprobieren einer anderen Größe ohne Training: **Modelle → „COCO-Basismodell importieren“**, Größe wählen, dann in der Annotation mit „Modell testen“ die neue Version auswählen. Ein Training ab einer anderen Größe erzeugt eine eigene Candidate-Version; der automatische Vergleich mit dem Production-Modell funktioniert auch größenübergreifend. Weitertrainieren einer eigenen Version erfolgt immer in deren Größe (`architecture` der Version). Die Checkpoints werden beim ersten Gebrauch heruntergeladen (der Model Zoo ist teils langsam; Fortschritt im Trainer-Log), per SHA-256-Präfix geprüft und in `models/base/` abgelegt.
 
 ### Training (`/training`)
 
@@ -138,10 +154,13 @@ Weitere Endpunkte (Auszug):
 | `GET /api/v1/images?status=unlabeled&negative=false` | Bilder auflisten |
 | `GET/PUT /api/v1/images/{id}/annotations` | Annotationen lesen / komplett ersetzen (`[]` = negatives Bild); `type`: `positive` oder `hard_negative` (+ `source_confidence`, `source_model`) |
 | `POST /api/v1/images/{id}/detect` | Modelltest auf gespeichertem Bild |
+| `POST /api/v1/batch-tests`, `GET /api/v1/batch-tests[/{id}]`, `POST …/{id}/cancel` | Batch-Test starten, Fortschritt, Abbruch |
+| `GET /api/v1/images?has_suggestions=true` | Bilder mit Vorschlägen (Detail: Feld `suggestion`) |
 | `POST /api/v1/training/runs` | Training starten |
 | `GET /api/v1/training/runs/{id}` / `…/log` / `POST …/cancel` | Status, Log, Abbruch |
 | `GET /api/v1/models`, `POST /api/v1/models/{version}/activate` | Modelle, Aktivierung/Rollback |
-| `POST /api/v1/models/bootstrap` | COCO-Basismodell (neu) importieren |
+| `POST /api/v1/models/bootstrap?base_model=rtmdet-m-coco` | COCO-Basismodell einer Größe (neu) importieren |
+| `GET /api/v1/training/base-models` | wählbare Basismodelle (COCO-Größen und eigene Versionen) |
 | `GET/POST /api/v1/classes`, `PATCH/DELETE /api/v1/classes/{name}`, `PUT /api/v1/classes/order` | Klassen verwalten |
 | `GET /api/v1/training/eligibility?classes=a,b` | verwendbare Bilder für eine Klassenauswahl |
 | `GET/PUT /api/v1/settings` | Einstellungen |
@@ -218,7 +237,7 @@ images/<sha256>.<ext>    Kopien der Bilder (bleiben erhalten, auch wenn Bilder s
 
 ### Training
 
-* Modell: RTMDet-S (`rtmdet_s_8xb32-300e_coco.py` aus MMDetection 3.3.0), initialisiert mit dem COCO-Checkpoint bzw. dem gewählten Basismodell, `num_classes` = Anzahl Klassen des Laufs, BN statt SyncBN (Single-GPU).
+* Modell: RTMDet-tiny/S/M (`rtmdet_<größe>_8xb32-300e_coco.py` aus MMDetection 3.3.0), initialisiert mit dem COCO-Checkpoint der Größe bzw. dem gewählten Basismodell, `num_classes` = Anzahl Klassen des Laufs, BN statt SyncBN (Single-GPU).
 * Pipeline wie RTMDet (CachedMosaic, RandomResize, RandomCrop, HSV, Flip, CachedMixUp), angepasst auf die gewählte Auflösung. In den letzten ~15 % der Epochen läuft sie ohne Mosaic/MixUp (`PipelineSwitchHook`), dazu EMA.
 * Optimizer AdamW. Ohne Angabe gilt `LR = 0.00025 × Batch/4` (Fine-Tuning) mit linearem Warm-up und Cosine-Decay. Auf der GPU wird mit AMP trainiert.
 * Validierung jede Epoche (bis 50 Epochen). Exportiert wird der beste Checkpoint nach COCO-mAP (EMA-Gewichte).
@@ -243,6 +262,8 @@ Ausgewertet wird das **exportierte OpenVINO-Modell** auf dem Validierungssplit, 
 | `detection_classes` | `name` (unique, fest), `label`, `color`, `coco_classes`, `sort_order`, `active` |
 | `training_runs` | `status`, `base_model_id`, `class_names`, `dataset_snapshot`, `input_width/height`, `epochs`, `batch_size`, `learning_rate`, `started_at`, `finished_at`, `progress_json`, `metrics_json`, `log`, `error` |
 | `model_versions` | `version`, `status`, `kind`, `checkpoint_key`, `onnx_key`, `openvino_key`, `config_key`, `input_width/height`, `class_names`, `metrics_json`, `dataset_snapshot`, `training_run_id`, `created_at`, `activated_at` |
+| `prediction_batches` | `status`, `model_ref`, `model_version`, `input_width/height`, `confidence`, `scope`, `total`, `processed`, `detections`, `failed_images` |
+| `image_suggestions` | `image_id` (unique), `batch_id`, `model_version`, `confidence`, `detections_json` |
 | `settings` | `key`, `value` (JSON) |
 
 Migrationen: Alembic (`backend/alembic`), werden beim Start der API automatisch ausgeführt. Die ORM-Modelle liegen im gemeinsamen Paket `common/odcore`, das API und Trainer verwenden.
@@ -291,12 +312,13 @@ docker compose run --rm --no-deps -e OD_BASE_URL=http://frontend api python -m p
 
 ### Modell & Trainingsdaten (getrennt vom Code zu betrachten)
 
-* **Base-Checkpoint:** `rtmdet_s_8xb32-300e_coco_20220905_161602-387a891e.pth` aus dem MMDetection-v3-Model-Zoo von OpenMMLab
-  (<https://download.openmmlab.com/mmdetection/v3.0/rtmdet/rtmdet_s_8xb32-300e_coco/rtmdet_s_8xb32-300e_coco_20220905_161602-387a891e.pth>,
-  SHA-256 `387a891e157cf0ab57d76b3ffc17bf77247089d672532427930b3140f9e789d6`, wird beim Download geprüft). OpenMMLab veröffentlicht die Gewichte im MMDetection-Repository, das unter Apache-2.0 steht. Eine separate Lizenz nur für die Gewichte ist dort nicht ausgewiesen.
+* **Base-Checkpoints** aus dem MMDetection-v3-Model-Zoo von OpenMMLab (`https://download.openmmlab.com/mmdetection/v3.0/rtmdet/…`, SHA-256-Präfix im Dateinamen, wird beim Download geprüft; Katalog in `common/odcore/architectures.py`):
+  `rtmdet_tiny_8xb32-300e_coco_20220902_112414-78e30dcc.pth`,
+  `rtmdet_s_8xb32-300e_coco_20220905_161602-387a891e.pth` (SHA-256 `387a891e157cf0ab57d76b3ffc17bf77247089d672532427930b3140f9e789d6`),
+  `rtmdet_m_8xb32-300e_coco_20220719_112220-229f527c.pth`. OpenMMLab veröffentlicht die Gewichte im MMDetection-Repository, das unter Apache-2.0 steht. Eine separate Lizenz nur für die Gewichte ist dort nicht ausgewiesen.
 * **Trainingsdaten des Checkpoints:** COCO 2017 (train). Die COCO-Annotationen stehen unter CC BY 4.0. Die Bilder stammen von Flickr, für sie gelten die jeweiligen Flickr-Lizenzen bzw. Nutzungsbedingungen. Der CSPNeXt-Backbone wurde von OpenMMLab zuvor auf ImageNet-1k vortrainiert, dessen Nutzungsbedingungen auf nicht-kommerzielle Forschung ausgelegt sind. Ob und wie sich das auf abgeleitete Gewichte auswirkt, ist rechtlich nicht abschließend geklärt.
 * **Eigene Modelle** (`model-0002`, …) sind von diesem Checkpoint abgeleitet und zusätzlich mit den eigenen Kamerabildern trainiert. Für diese Bilder gelten die Rechte bzw. Datenschutzanforderungen des Betreibers (Personen auf Kamerabildern sind personenbezogene Daten).
-* Der COCO-Checkpoint wird zur Laufzeit heruntergeladen (`BASE_CHECKPOINT_URL`) und im Bucket `models/base/` abgelegt. Er ist nicht Teil des Repositorys.
+* Die COCO-Checkpoints werden zur Laufzeit heruntergeladen und im Bucket `models/base/` abgelegt. Sie sind nicht Teil des Repositorys.
 
 ## Troubleshooting
 

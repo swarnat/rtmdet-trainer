@@ -1,9 +1,9 @@
-"""RTMDet-S base model: MMDetection config and the COCO-pretrained checkpoint.
+"""RTMDet base models (tiny/S/M): MMDetection config and COCO-pretrained checkpoint.
 
-Checkpoint origin: OpenMMLab MMDetection v3 model zoo,
-``rtmdet_s_8xb32-300e_coco_20220905_161602-387a891e.pth`` (COCO 2017 train,
-44.6 box AP on val2017). The file is downloaded once and kept in the
-``models`` bucket under ``base/`` so later runs do not depend on the internet.
+Checkpoints come from the OpenMMLab MMDetection v3 model zoo (see
+``odcore.architectures``). Each file is downloaded once, verified against the
+sha256 prefix of its official name and kept in the ``models`` bucket under
+``base/`` so later runs do not depend on the internet.
 """
 from __future__ import annotations
 
@@ -11,40 +11,38 @@ import hashlib
 import logging
 import math
 import os
+import time
 import urllib.request
 
 import torch
 
+from odcore.architectures import BaseModel
 from odcore.classes import COCO_CLASSES
 
-from ..config import get_settings
 from ..db import storage
 
 log = logging.getLogger(__name__)
 
-BASE_MODEL_ID = "rtmdet-s-coco"
-BASE_CONFIG_NAME = "rtmdet/rtmdet_s_8xb32-300e_coco.py"
-BASE_CHECKPOINT_KEY = "base/rtmdet_s_8xb32-300e_coco.pth"
 # RTMDet normalisation (BGR input, no channel swap)
 MEAN = (103.53, 116.28, 123.675)
 STD = (57.375, 57.12, 58.395)
 
 
-def base_config_path() -> str:
-    """Path of the RTMDet-S config shipped inside the mmdet package (``.mim``)."""
+def base_config_path(base: BaseModel) -> str:
+    """Path of the RTMDet config shipped inside the mmdet package (``.mim``)."""
     import mmdet
 
-    path = os.path.join(os.path.dirname(mmdet.__file__), ".mim", "configs", BASE_CONFIG_NAME)
+    path = os.path.join(os.path.dirname(mmdet.__file__), ".mim", "configs", base.config)
     if not os.path.exists(path):
         raise FileNotFoundError(f"MMDetection config not found: {path}")
     return path
 
 
-def load_base_config(num_classes: int):
-    """RTMDet-S config adapted for single-GPU/CPU use and the given class count."""
+def load_base_config(base: BaseModel, num_classes: int):
+    """RTMDet config of the given size, adapted for single-GPU/CPU use and the class count."""
     from mmengine.config import Config
 
-    cfg = Config.fromfile(base_config_path())
+    cfg = Config.fromfile(base_config_path(base))
     # No ImageNet backbone download: weights always come from a full detector checkpoint.
     cfg.model.backbone.init_cfg = None
     # SyncBN is only meaningful for multi-GPU training; plain BN keeps CPU export simple.
@@ -63,30 +61,53 @@ def _sha256(path: str) -> str:
     return h.hexdigest()
 
 
-def ensure_base_checkpoint(local_dir: str) -> str:
-    """Return a local path to the COCO checkpoint, fetching it from S3 or the model zoo."""
-    settings = get_settings()
+def _download(url: str, path: str, attempts: int = 3, timeout: float = 60.0) -> None:
+    """Download with socket timeout, retries and progress logging (the model zoo can be slow)."""
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as res, open(path, "wb") as f:
+                total = int(res.headers.get("Content-Length") or 0)
+                done, last_log = 0, time.monotonic()
+                while chunk := res.read(1 << 20):
+                    f.write(chunk)
+                    done += len(chunk)
+                    if time.monotonic() - last_log > 15:
+                        last_log = time.monotonic()
+                        pct = f" ({100 * done / total:.0f} %)" if total else ""
+                        log.info("download: %.1f MB%s", done / 1e6, pct)
+                if total and done != total:
+                    raise OSError(f"incomplete download: {done} of {total} bytes")
+            return
+        except OSError as exc:
+            log.warning("download attempt %d/%d failed: %s", attempt, attempts, exc)
+            if attempt == attempts:
+                raise
+            time.sleep(5 * attempt)
+
+
+def ensure_base_checkpoint(base: BaseModel, local_dir: str) -> str:
+    """Return a local path to the COCO checkpoint of ``base``, fetching it from S3 or the model zoo."""
     s3 = storage()
     bucket = s3.settings.bucket_models
+    key = base.checkpoint_key
     os.makedirs(local_dir, exist_ok=True)
-    path = os.path.join(local_dir, os.path.basename(BASE_CHECKPOINT_KEY))
+    path = os.path.join(local_dir, os.path.basename(key))
     if os.path.exists(path):
         return path
-    if s3.exists(bucket, BASE_CHECKPOINT_KEY):
-        s3.download_file(bucket, BASE_CHECKPOINT_KEY, path)
+    if s3.exists(bucket, key):
+        s3.download_file(bucket, key, path)
         return path
 
-    log.info("downloading COCO-pretrained RTMDet-S checkpoint from %s", settings.base_checkpoint_url)
+    log.info("downloading COCO-pretrained %s checkpoint from %s", base.label, base.checkpoint_url)
     tmp = path + ".part"
-    urllib.request.urlretrieve(settings.base_checkpoint_url, tmp)
+    _download(base.checkpoint_url, tmp)
     digest = _sha256(tmp)
-    prefix = settings.base_checkpoint_sha256_prefix.strip().lower()
-    if prefix and not digest.startswith(prefix):
+    if not digest.startswith(base.sha256_prefix):
         os.remove(tmp)
-        raise RuntimeError(f"checkpoint sha256 {digest} does not match expected prefix {prefix}")
+        raise RuntimeError(f"checkpoint sha256 {digest} does not match expected prefix {base.sha256_prefix}")
     os.replace(tmp, path)
-    s3.upload_file(bucket, BASE_CHECKPOINT_KEY, path, "application/octet-stream")
-    log.info("stored base checkpoint as s3://%s/%s (sha256 %s)", bucket, BASE_CHECKPOINT_KEY, digest)
+    s3.upload_file(bucket, key, path, "application/octet-stream")
+    log.info("stored base checkpoint as s3://%s/%s (sha256 %s)", bucket, key, digest)
     return path
 
 

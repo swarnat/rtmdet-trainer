@@ -187,6 +187,55 @@ class ModelVersion(Base):
     activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
 
+class BatchStatus(str, enum.Enum):
+    queued = "queued"
+    running = "running"
+    completed = "completed"
+    failed = "failed"
+    cancelled = "cancelled"
+
+
+class PredictionBatch(Base):
+    """A "batch test": one model run over many images, producing suggestions."""
+
+    __tablename__ = "prediction_batches"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    status: Mapped[BatchStatus] = mapped_column(_enum(BatchStatus, "batch_status"), nullable=False, default=BatchStatus.queued)
+    model_ref: Mapped[str] = mapped_column(String(32), nullable=False)          # as requested, e.g. "production"
+    model_version: Mapped[Optional[str]] = mapped_column(String(32))           # resolved version
+    input_width: Mapped[int] = mapped_column(Integer, nullable=False)
+    input_height: Mapped[int] = mapped_column(Integer, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    # "unlabeled" or "unlabeled_and_review" (also labeled images that still need review for new classes)
+    scope: Mapped[str] = mapped_column(String(32), nullable=False, default="unlabeled")
+    total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    processed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    detections: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_images: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now())
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
+class ImageSuggestion(Base):
+    """Latest model suggestions for an image (from a batch test); removed when the image is saved as labeled."""
+
+    __tablename__ = "image_suggestions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    image_id: Mapped[int] = mapped_column(ForeignKey("images.id", ondelete="CASCADE"), nullable=False, unique=True)
+    batch_id: Mapped[Optional[int]] = mapped_column(ForeignKey("prediction_batches.id", ondelete="SET NULL"), index=True)
+    model_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    input_width: Mapped[int] = mapped_column(Integer, nullable=False)
+    input_height: Mapped[int] = mapped_column(Integer, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    # [{"class": ..., "confidence": ..., "bbox": {"x1", "y1", "x2", "y2"}}] in original pixels
+    detections_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONType, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now())
+
+
 class DetectionClass(Base):
     __tablename__ = "detection_classes"
 

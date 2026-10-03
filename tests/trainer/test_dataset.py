@@ -68,7 +68,9 @@ def test_mmdet_config_keeps_negative_samples():
     pytest.importorskip("mmdet")
     from trainer.rtmdet.dataset_config import TrainParams, build_config
 
-    cfg = build_config(TrainParams(data_root="/data", class_names=("person", "bicycle", "vehicle"), work_dir="/work", load_from="/init.pth", input_width=1536,
+    from odcore.architectures import get_base_model
+
+    cfg = build_config(TrainParams(base=get_base_model("rtmdet-s-coco"), data_root="/data", class_names=("person", "bicycle", "vehicle"), work_dir="/work", load_from="/init.pth", input_width=1536,
                                    input_height=864, epochs=30, batch_size=4, learning_rate=None, num_workers=2,
                                    num_train_images=100, use_amp=False, seed=1))
     ds = cfg.train_dataloader.dataset
@@ -118,3 +120,18 @@ def test_head_init_by_class_name(tmp_path):
     bias = torch.load(path)["state_dict"]["bbox_head.rtm_cls.0.bias"].tolist()
     assert bias == [2.0, (2 + 3 + 5 + 7) / 4]
     assert report == {"person": "source model", "vehicle": "COCO car+motorcycle+bus+truck"}
+
+
+@pytest.mark.parametrize("base_id,widen,deepen", [("rtmdet-tiny-coco", 0.375, 0.167), ("rtmdet-s-coco", 0.5, 0.33), ("rtmdet-m-coco", 0.75, 0.67)])
+def test_base_model_sizes(base_id, widen, deepen):
+    pytest.importorskip("mmdet")
+    from odcore.architectures import get_base_model
+    from trainer.rtmdet.base_config import load_base_config
+
+    base = get_base_model(base_id)
+    cfg = load_base_config(base, num_classes=4)
+    assert cfg.model.backbone.widen_factor == widen and cfg.model.backbone.deepen_factor == deepen
+    assert cfg.model.bbox_head.num_classes == 4
+    assert cfg.model.backbone.init_cfg is None
+    assert cfg.model.backbone.norm_cfg["type"] == "BN" and cfg.model.bbox_head.norm_cfg["type"] == "BN"
+    assert base.checkpoint_key.startswith("base/rtmdet_") and base.checkpoint_url.endswith(f"{base.sha256_prefix}.pth")

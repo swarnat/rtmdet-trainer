@@ -17,7 +17,22 @@ app.use(router)
 app.use(Quasar, {
   plugins: { Notify, Dialog, Loading },
   lang: langDe,
-  config: { notify: { position: 'top-right', timeout: 3000 } },
+  config: {
+    dark: true,
+    // Visora palette (UX Pilot design)
+    brand: {
+      primary: '#06b6d4',
+      secondary: '#a78bfa',
+      accent: '#a78bfa',
+      positive: '#34d399',
+      negative: '#fb7185',
+      info: '#22d3ee',
+      warning: '#fbbf24',
+      dark: '#0f172a',
+      'dark-page': '#0a0f1a',
+    },
+    notify: { position: 'top-right', timeout: 3000 },
+  },
 })
 app.use(VueKonva)
 app.mount('#app')

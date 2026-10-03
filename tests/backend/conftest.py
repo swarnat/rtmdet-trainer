@@ -70,3 +70,28 @@ def session_factory():
         s.add_all(DetectionClass(sort_order=i, active=True, **c) for i, c in enumerate(DEFAULT_CLASSES))
         s.commit()
     return factory
+
+
+class FakeStorage:
+    """Minimal S3 stand-in: returns the same JPEG for every key."""
+
+    class settings:  # noqa: N801 - mimics S3Settings attributes
+        bucket_images = "training-images"
+
+    def __init__(self, data: bytes):
+        self.data = data
+
+    def get_bytes(self, bucket: str, key: str) -> bytes:
+        return self.data
+
+
+def make_local_registry(xml_path: str, cache_dir: str):
+    from app.services.model_registry import ModelRegistry
+
+    class LocalRegistry(ModelRegistry):
+        """Registry whose model files come from a local path instead of S3."""
+
+        def local_ir_path(self, ref):  # same contract as the parent
+            return xml_path
+
+    return LocalRegistry(storage=None, cache_dir=cache_dir)  # type: ignore[arg-type]

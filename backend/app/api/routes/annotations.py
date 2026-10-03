@@ -35,4 +35,4 @@ def save_annotations(image_id: int, body: AnnotationsSave, session: Session = De
     except AnnotationValidationError as exc:
         session.rollback()
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
-    return to_detail(image, active_class_names(session))
+    return to_detail(image, active_class_names(session), session)

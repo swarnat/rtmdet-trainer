@@ -4,7 +4,7 @@
 The trainer does this automatically on first start (BOOTSTRAP_ON_START=true).
 Use this script to re-import, e.g. after changing the COCO class mapping:
 
-    python3 scripts/bootstrap-model.py --url http://localhost:8080 [--activate]
+    python3 scripts/bootstrap-model.py --url http://localhost:8080 [--base rtmdet-m-coco] [--activate]
 
 Only the Python standard library is required.
 """
@@ -26,13 +26,15 @@ def call(url: str, method: str = "GET"):
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--url", default="http://localhost:8080", help="frontend or API base URL")
+    p.add_argument("--base", default="rtmdet-s-coco", choices=["rtmdet-tiny-coco", "rtmdet-s-coco", "rtmdet-m-coco"],
+                   help="model size to import")
     p.add_argument("--activate", action="store_true", help="activate the imported version as production")
     p.add_argument("--timeout", type=int, default=900, help="seconds to wait for the import")
     args = p.parse_args()
     api = args.url.rstrip("/") + "/api/v1"
 
     before = {m["version"] for m in call(f"{api}/models")}
-    job = call(f"{api}/models/bootstrap?force=true", "POST")
+    job = call(f"{api}/models/bootstrap?force=true&base_model={args.base}", "POST")
     print(f"queued bootstrap job {job['job_id']}, waiting for the trainer ...")
     deadline = time.time() + args.timeout
     while time.time() < deadline:

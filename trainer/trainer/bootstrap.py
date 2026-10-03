@@ -28,19 +28,24 @@ from .evaluate import evaluate_detector
 from .export_onnx import RTMDetDeployWrapper, build_detector, export_onnx
 from .export_openvino import export_openvino, verify_openvino
 from .publish import Artifacts, publish_model
-from .rtmdet.base_config import BASE_CHECKPOINT_KEY, ensure_base_checkpoint, load_base_config
+from odcore.architectures import DEFAULT_BASE_MODEL, get_base_model
+
+from .rtmdet.base_config import ensure_base_checkpoint, load_base_config
 
 log = logging.getLogger("trainer.bootstrap")
 
 
-def bootstrap_exists() -> bool:
+def bootstrap_exists(architecture: str) -> bool:
     with session_factory()() as session:
-        return session.execute(select(ModelVersion.id).where(ModelVersion.kind == "coco-bootstrap")).first() is not None
+        return session.execute(
+            select(ModelVersion.id).where(ModelVersion.kind == "coco-bootstrap", ModelVersion.architecture == architecture)
+        ).first() is not None
 
 
-def run_bootstrap(force: bool = False) -> str | None:
-    if not force and bootstrap_exists():
-        log.info("COCO bootstrap model already exists, nothing to do")
+def run_bootstrap(force: bool = False, base_id: str = DEFAULT_BASE_MODEL) -> str | None:
+    base = get_base_model(base_id)
+    if not force and bootstrap_exists(base.architecture):
+        log.info("COCO bootstrap model for %s already exists, nothing to do", base.architecture)
         return None
     settings = get_settings()
     s3 = storage()
@@ -60,8 +65,8 @@ def run_bootstrap(force: bool = False) -> str | None:
     shutil.rmtree(work, ignore_errors=True)
     os.makedirs(work, exist_ok=True)
     try:
-        ckpt = ensure_base_checkpoint(os.path.join(settings.work_dir, "base"))
-        cfg = load_base_config(num_classes=80)
+        ckpt = ensure_base_checkpoint(base, os.path.join(settings.work_dir, "base"))
+        cfg = load_base_config(base, num_classes=80)
         config_path = os.path.join(work, "config.py")
         cfg.dump(config_path)
         detector = build_detector(cfg, ckpt)
@@ -88,9 +93,10 @@ def run_bootstrap(force: bool = False) -> str | None:
             json.dump(metrics or {"export_verification": verification}, f, indent=1)
 
         mv = publish_model(
-            Artifacts(checkpoint_path=None, checkpoint_key=BASE_CHECKPOINT_KEY, onnx_path=onnx_path,
+            Artifacts(checkpoint_path=None, checkpoint_key=base.checkpoint_key, onnx_path=onnx_path,
                       openvino_dir=ov_dir, config_path=config_path, metrics_path=metrics_path),
             kind="coco-bootstrap",
+            architecture=base.architecture,
             input_width=width,
             input_height=height,
             class_names=class_names,
@@ -99,7 +105,8 @@ def run_bootstrap(force: bool = False) -> str | None:
             dataset_snapshot=None,
             class_mapping=mapping,
             status=ModelStatus.production,  # only if no production model exists (checked in publish_model)
-            notes="COCO-pretrained RTMDet-S (MMDetection model zoo), COCO classes merged via class mapping; not trained on own data",
+            notes=f"COCO-pretrained {base.label[:-7]} (MMDetection model zoo, COCO AP {base.coco_ap}), "
+                  "COCO classes merged via class mapping; not trained on own data",
         )
         return mv.version
     finally:

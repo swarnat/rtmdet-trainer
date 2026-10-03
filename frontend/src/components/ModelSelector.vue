@@ -46,7 +46,7 @@ const options = computed(() => {
     opts.push({
       value: m.version,
       label: m.version,
-      caption: `${m.status} · ${m.kind} · ${m.input_width}×${m.input_height}${map != null ? ` · mAP50 ${(map * 100).toFixed(1)} %` : ''}`,
+      caption: `${m.status} · ${m.architecture} · ${m.kind === 'coco-bootstrap' ? 'COCO' : 'trainiert'} · ${m.input_width}×${m.input_height}${map != null ? ` · mAP50 ${(map * 100).toFixed(1)} %` : ''}`,
     })
   }
   return opts

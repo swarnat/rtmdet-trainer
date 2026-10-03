@@ -59,6 +59,7 @@ export interface ImageItem {
   dataset_split: 'train' | 'validation' | null
   annotation_count: number
   hard_negative_count: number
+  suggestion_count: number | null
   reviewed_classes: string[] | null
   needs_review: boolean
   created_at: string
@@ -68,6 +69,37 @@ export interface ImageItem {
 
 export interface ImageDetail extends ImageItem {
   annotations: Annotation[]
+  suggestion: Suggestion | null
+}
+
+/** Stored detections of a batch test for one image */
+export interface Suggestion {
+  batch_id: number | null
+  model_version: string
+  input_width: number
+  input_height: number
+  confidence: number
+  detections: DetectionItem[]
+  created_at: string
+}
+
+export interface BatchTest {
+  id: number
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+  model_ref: string
+  model_version: string | null
+  input_width: number
+  input_height: number
+  confidence: number
+  scope: 'unlabeled' | 'unlabeled_and_review'
+  total: number
+  processed: number
+  detections: number
+  failed_images: number
+  error: string | null
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
 }
 
 export interface UploadResult {
@@ -224,6 +256,16 @@ export interface BaseModelOption {
   id: string
   label: string
   description: string
+  architecture: string
+  kind: 'coco' | 'model'
+}
+
+export interface CocoBaseModel {
+  id: string
+  architecture: string
+  label: string
+  coco_ap: number
+  params_m: number
 }
 
 export interface DatasetStats {
@@ -247,6 +289,7 @@ export type Settings = Record<string, unknown> & {
   hard_negative_context_factor: number
   hard_negative_min_crop_fraction: number
   hard_negative_oversample: number
+  default_base_model: string
 }
 
 export class ApiError extends Error {
@@ -296,7 +339,15 @@ function detectForm(opts: DetectOptions, form = new FormData()) {
 
 export const api = {
   // images
-  listImages(params: { status?: string; split?: string; negative?: boolean; needs_review?: boolean; offset?: number; limit?: number }) {
+  listImages(params: {
+    status?: string
+    split?: string
+    negative?: boolean
+    needs_review?: boolean
+    has_suggestions?: boolean
+    offset?: number
+    limit?: number
+  }) {
     const q = new URLSearchParams()
     Object.entries(params).forEach(([k, v]) => {
       if (v !== undefined && v !== null && v !== '' && v !== false) q.set(k, String(v))
@@ -345,8 +396,17 @@ export const api = {
   activateModel: (version: string) => request<ModelVersion>(`/models/${version}/activate`, { method: 'POST' }),
   archiveModel: (version: string) => request<ModelVersion>(`/models/${version}/archive`, { method: 'POST' }),
   updateModelNotes: (version: string, notes: string) => request<ModelVersion>(`/models/${version}`, json('PATCH', { notes })),
-  bootstrapModel: (force = false) => request<{ job_id: string }>(`/models/bootstrap?force=${force}`, { method: 'POST' }),
+  bootstrapModel: (force = false, baseModel = 'rtmdet-s-coco') =>
+    request<{ job_id: string }>(`/models/bootstrap?force=${force}&base_model=${encodeURIComponent(baseModel)}`, { method: 'POST' }),
+  cocoBaseModels: () => request<CocoBaseModel[]>('/models/base-models'),
   artifactUrl: (version: string, artifact: string) => `${BASE}/models/${version}/artifacts/${artifact}`,
+
+  // batch tests
+  startBatchTest: (body: { model: string; input_size?: string | null; confidence?: number | null; scope: string }) =>
+    request<BatchTest>('/batch-tests', json('POST', body)),
+  listBatchTests: () => request<BatchTest[]>('/batch-tests'),
+  getBatchTest: (id: number) => request<BatchTest>(`/batch-tests/${id}`),
+  cancelBatchTest: (id: number) => request<BatchTest>(`/batch-tests/${id}/cancel`, { method: 'POST' }),
 
   // classes
   listClasses: () => request<DetectionClass[]>('/classes'),

@@ -12,7 +12,18 @@
             </div>
           </q-card-section>
           <q-card-section class="column q-gutter-md">
-            <q-select v-model="form.base_model_id" :options="baseModels" option-value="id" option-label="label" emit-value map-options outlined dense label="Base Model">
+            <q-select
+              v-model="form.base_model_id"
+              :options="baseModels"
+              option-value="id"
+              option-label="label"
+              emit-value
+              map-options
+              outlined
+              dense
+              label="Base Model"
+              :hint="baseHint"
+            >
               <template #option="scope">
                 <q-item v-bind="scope.itemProps">
                   <q-item-section>
@@ -207,6 +218,13 @@ const form = reactive({
   class_names: [] as string[],
 })
 const elig = ref<TrainingEligibility | null>(null)
+const baseHint = computed(() => {
+  const b = baseModels.value.find((x) => x.id === form.base_model_id)
+  if (!b) return ''
+  return b.kind === 'coco'
+    ? `${b.architecture}: neues Modell ab COCO-Gewichten`
+    : `${b.architecture}: weitertrainieren (gleiche Modellgröße)`
+})
 const classOptions = computed(() => classes.active.map((c) => ({ value: c.name, label: c.label })))
 
 watch(
@@ -327,6 +345,7 @@ let timer: number | undefined
 onMounted(async () => {
   await Promise.all([models.refresh(), classes.refresh()])
   form.input_size = models.defaultInputSize
+  form.base_model_id = models.settings?.default_base_model ?? 'rtmdet-s-coco'
   form.class_names = classes.active.map((c) => c.name)
   const [bm, st] = await Promise.all([api.baseModels(), api.datasetStats()])
   baseModels.value = bm

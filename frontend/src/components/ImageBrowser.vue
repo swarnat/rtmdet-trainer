@@ -1,24 +1,37 @@
 <template>
   <div class="column no-wrap full-height">
     <div class="q-pa-sm column q-gutter-sm">
-      <q-btn-toggle
+      <q-select
         v-model="filter"
-        spread
         dense
-        no-caps
-        toggle-color="primary"
+        outlined
+        emit-value
+        map-options
+        options-dense
+        label="Filter"
         :options="[
-          { label: 'Alle', value: 'all' },
+          { label: 'Alle Bilder', value: 'all' },
           { label: 'Offen', value: 'unlabeled' },
-          { label: 'Fertig', value: 'labeled' },
-          { label: 'Negativ', value: 'negative' },
-          { label: 'Prüfen', value: 'review' },
+          { label: 'Fertig annotiert', value: 'labeled' },
+          { label: 'Negativ (ohne Objekte)', value: 'negative' },
+          { label: 'Nachprüfen (neue Klassen)', value: 'review' },
+          { label: 'Mit Vorschlägen (Batch-Test)', value: 'suggestions' },
         ]"
       />
       <div class="row items-center no-wrap q-gutter-x-sm">
-        <q-btn color="primary" icon="upload" label="Bilder hochladen" no-caps class="col" :loading="uploading" @click="fileInput?.click()" />
+        <q-btn color="primary" icon="upload" label="Hochladen" no-caps class="col" :loading="uploading" @click="fileInput?.click()" />
+        <q-btn color="deep-purple" icon="playlist_play" label="Batch-Test" no-caps class="col" @click="batchDialog = true">
+          <q-tooltip>Modell auf allen offenen Bildern testen und Vorschläge speichern</q-tooltip>
+        </q-btn>
         <q-btn flat round dense icon="refresh" @click="reload"><q-tooltip>Neu laden</q-tooltip></q-btn>
       </div>
+      <div v-if="runningBatch" class="cursor-pointer" @click="batchDialog = true">
+        <div class="text-caption text-deep-purple">
+          Batch-Test #{{ runningBatch.id }} läuft: {{ runningBatch.processed }} / {{ runningBatch.total }}
+        </div>
+        <q-linear-progress :value="runningBatch.total ? runningBatch.processed / runningBatch.total : 0" color="deep-purple" rounded />
+      </div>
+      <BatchTestDialog v-model="batchDialog" @running="(b) => (runningBatch = b)" @finished="onBatchFinished" />
       <input ref="fileInput" type="file" accept="image/jpeg,image/png,image/webp,image/bmp" multiple hidden @change="onFiles" />
       <div class="text-caption text-grey-7">{{ total }} Bilder</div>
     </div>
@@ -42,6 +55,9 @@
               <q-badge v-if="img.annotation_status === 'unlabeled'" color="grey-6" label="offen" />
               <q-badge v-else-if="img.annotation_count === 0" color="purple-6" label="negativ" />
               <q-badge v-else color="green-7" :label="`${img.annotation_count} Boxen`" />
+              <q-badge v-if="img.suggestion_count != null" color="deep-purple" class="q-ml-xs" :label="`${img.suggestion_count} Vorschl.`">
+                <q-tooltip>Vorschläge aus einem Batch-Test</q-tooltip>
+              </q-badge>
               <q-badge v-if="img.hard_negative_count" color="grey-9" class="q-ml-xs" :label="`${img.hard_negative_count} HN`">
                 <q-tooltip>Hard Negatives (bekannte Fehlalarme)</q-tooltip>
               </q-badge>
@@ -66,14 +82,17 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { useQuasar } from 'quasar'
-import { api, errorMessage, type ImageItem } from '@/services/api'
+import BatchTestDialog from './BatchTestDialog.vue'
+import { api, errorMessage, type BatchTest, type ImageItem } from '@/services/api'
 
 const props = defineProps<{ selectedId: number | null }>()
-const emit = defineEmits<{ select: [id: number]; filterChange: [status: string | undefined] }>()
+const emit = defineEmits<{ select: [id: number]; filterChange: [status: string | undefined]; batchFinished: [] }>()
 const $q = useQuasar()
 
 const PAGE = 100
-const filter = ref<'all' | 'unlabeled' | 'labeled' | 'negative' | 'review'>('all')
+const filter = ref<'all' | 'unlabeled' | 'labeled' | 'negative' | 'review' | 'suggestions'>('all')
+const batchDialog = ref(false)
+const runningBatch = ref<BatchTest | null>(null)
 const items = ref<ImageItem[]>([])
 const total = ref(0)
 const loading = ref(false)
@@ -85,6 +104,7 @@ function query(offset: number) {
     status: filter.value === 'unlabeled' || filter.value === 'labeled' ? filter.value : undefined,
     negative: filter.value === 'negative',
     needs_review: filter.value === 'review',
+    has_suggestions: filter.value === 'suggestions',
     offset,
     limit: PAGE,
   })
@@ -159,8 +179,21 @@ function onDrop(e: DragEvent) {
   upload(Array.from(e.dataTransfer?.files ?? []).filter((f) => f.type.startsWith('image/')))
 }
 
+function onBatchFinished(b: BatchTest) {
+  $q.notify({
+    type: b.status === 'completed' ? 'positive' : 'warning',
+    message: `Batch-Test #${b.id} ${b.status === 'completed' ? 'abgeschlossen' : b.status}: ${b.detections} Vorschläge für ${b.processed} Bilder`,
+    caption: b.status === 'completed' ? 'Filter „Mit Vorschlägen“ zeigt die betroffenen Bilder' : (b.error ?? undefined),
+  })
+  if (b.status === 'completed') filter.value = 'suggestions'
+  reload()
+  emit('batchFinished')
+}
+
 watch(filter, () => {
-  emit('filterChange', filter.value === 'unlabeled' || filter.value === 'labeled' ? filter.value : undefined)
+  // previous/next navigation: suggestions are on open images
+  const status = filter.value === 'suggestions' ? 'unlabeled' : filter.value
+  emit('filterChange', status === 'unlabeled' || status === 'labeled' ? status : undefined)
   reload()
 })
 onMounted(reload)

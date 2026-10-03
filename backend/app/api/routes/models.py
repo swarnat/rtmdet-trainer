@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
+from odcore.architectures import BASE_MODELS, get_base_model
 from odcore.storage import ObjectStorage
 
 from app.core.database import get_db
@@ -46,17 +47,30 @@ def list_models(session: Session = Depends(get_db)) -> list[ModelVersionOut]:
     return [to_out(m) for m in repo.list_versions(session)]
 
 
+@router.get("/base-models", summary="Selectable COCO-pretrained base models")
+def coco_base_models() -> list[dict]:
+    return [
+        {"id": b.id, "architecture": b.architecture, "label": b.label, "coco_ap": b.coco_ap, "params_m": b.params_m}
+        for b in BASE_MODELS
+    ]
+
+
 @router.get("/loaded", summary="Compiled OpenVINO models currently held in memory")
 def loaded_models(registry: ModelRegistry = Depends(get_registry)) -> list[dict]:
     return registry.loaded()
 
 
-@router.post("/bootstrap", status_code=status.HTTP_202_ACCEPTED, summary="Import the COCO-pretrained RTMDet-S as a model version")
-def bootstrap(force: bool = False) -> dict:
-    """Queues a job in the trainer that exports the COCO checkpoint (with the
-    configured COCO->target class mapping) as a new model version."""
+@router.post("/bootstrap", status_code=status.HTTP_202_ACCEPTED, summary="Import a COCO-pretrained RTMDet as a model version")
+def bootstrap(force: bool = False, base_model: str = "rtmdet-s-coco") -> dict:
+    """Queues a job in the trainer that exports the COCO checkpoint of the given
+    size (with the configured COCO->class mapping) as a new model version, e.g.
+    to test RTMDet-tiny or -M on existing images before training."""
     try:
-        return {"job_id": enqueue_bootstrap(force)}
+        get_base_model(base_model)
+    except KeyError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    try:
+        return {"job_id": enqueue_bootstrap(force, base_model)}
     except Exception as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"job queue unavailable: {exc}") from exc
 

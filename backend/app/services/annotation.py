@@ -4,7 +4,9 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from odcore.classes import active_class_names, list_classes
-from odcore.db import Annotation, AnnotationStatus, DatasetSplit, Image, utcnow
+from sqlalchemy import delete
+
+from odcore.db import Annotation, AnnotationStatus, DatasetSplit, Image, ImageSuggestion, utcnow
 from odcore.geometry import normalize_box
 from odcore.settings_store import get_setting
 from odcore.splits import assign_split
@@ -29,6 +31,8 @@ def mark_reviewed(session: Session, image: Image) -> None:
     image.labeled_at = utcnow()
     image.reviewed_classes = active_class_names(session)
     ensure_split(session, image)
+    # batch-test suggestions have been dealt with
+    session.execute(delete(ImageSuggestion).where(ImageSuggestion.image_id == image.id))
 
 
 def replace_annotations(session: Session, image: Image, items: list[AnnotationIn], mark_labeled: bool) -> Image:

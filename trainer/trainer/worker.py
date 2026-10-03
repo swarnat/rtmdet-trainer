@@ -64,8 +64,8 @@ def run_training_job(run_id: int) -> None:
                 session.commit()
 
 
-def run_bootstrap_job(force: bool = False) -> None:
-    _run_subprocess("bootstrap", *(["--force"] if force else []))
+def run_bootstrap_job(force: bool = False, base_id: str = "rtmdet-s-coco") -> None:
+    _run_subprocess("bootstrap", "--base", base_id, *(["--force"] if force else []))
 
 
 # -- start-up ---------------------------------------------------------------------

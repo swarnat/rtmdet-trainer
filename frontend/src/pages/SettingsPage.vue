@@ -24,6 +24,20 @@
           <q-input v-model.number="form.default_confidence" type="number" step="0.05" outlined dense label="Standard-Confidence" class="col-6 col-sm-4" />
           <q-input v-model.number="form.nms_iou_threshold" type="number" step="0.05" outlined dense label="NMS-IoU" class="col-6 col-sm-4" />
         </div>
+        <div class="text-subtitle2">Training</div>
+        <div class="row q-col-gutter-md">
+          <q-select
+            v-model="form.default_base_model"
+            :options="baseOptions"
+            emit-value
+            map-options
+            outlined
+            dense
+            label="Vorausgewähltes Basismodell"
+            hint="Gilt für neue Trainingsläufe; Annotationen sind modellunabhängig"
+            class="col-12 col-sm-6"
+          />
+        </div>
         <div class="text-subtitle2">Dataset &amp; Evaluation</div>
         <div class="row q-col-gutter-md">
           <q-input
@@ -72,6 +86,7 @@ const models = useModelsStore()
 const form = ref<Settings | null>(null)
 const defaults = ref<Settings | null>(null)
 const saving = ref(false)
+const baseOptions = ref<{ label: string; value: string }[]>([])
 
 async function load() {
   const res = await api.getSettings()
@@ -98,5 +113,11 @@ async function save() {
   }
 }
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  baseOptions.value = (await api.cocoBaseModels()).map((b) => ({
+    label: `${b.label} – COCO AP ${b.coco_ap}, ${b.params_m} M Parameter`,
+    value: b.id,
+  }))
+})
 </script>

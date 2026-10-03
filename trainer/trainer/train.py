@@ -23,7 +23,9 @@ from .export_onnx import RTMDetDeployWrapper, build_detector, export_onnx
 from .export_openvino import export_openvino, verify_openvino
 from .progress import ProgressHookFactory, RunReporter
 from .publish import Artifacts, publish_model
-from .rtmdet.base_config import BASE_MODEL_ID, build_init_checkpoint, ensure_base_checkpoint
+from odcore.architectures import base_model_for_architecture, get_base_model
+
+from .rtmdet.base_config import build_init_checkpoint, ensure_base_checkpoint
 from .rtmdet.dataset_config import TrainParams, build_config, default_learning_rate
 
 log = logging.getLogger("trainer.train")
@@ -131,13 +133,19 @@ def run_training(run_id: int) -> None:
         reporter.progress(phase="preparing", percent=1)
         ckpt_dir = os.path.join(work_root, "checkpoints")
         os.makedirs(ckpt_dir, exist_ok=True)
-        coco_ckpt = ensure_base_checkpoint(os.path.join(settings.work_dir, "base"))
-        if params["base_model_id"] == BASE_MODEL_ID:
+        try:  # COCO base model of a given size ...
+            base = get_base_model(params["base_model_id"])
+            source_version = None
+        except KeyError:  # ... or continue training an own model version (same size)
+            with session_factory()() as session:
+                source_version = session.query(ModelVersion).filter_by(version=params["base_model_id"]).one()
+                base = base_model_for_architecture(source_version.architecture)
+                base_key, source_classes = source_version.checkpoint_key, list(source_version.class_names)
+        log.info("architecture: %s", base.architecture)
+        coco_ckpt = ensure_base_checkpoint(base, os.path.join(settings.work_dir, "base"))
+        if source_version is None:
             source_ckpt, source_classes = coco_ckpt, list(COCO_CLASSES)
         else:
-            with session_factory()() as session:
-                base = session.query(ModelVersion).filter_by(version=params["base_model_id"]).one()
-                base_key, source_classes = base.checkpoint_key, list(base.class_names)
             source_ckpt = os.path.join(ckpt_dir, "base.pth")
             s3.download_file(s3.settings.bucket_models, base_key, source_ckpt)
         init_ckpt, head_report = build_init_checkpoint(
@@ -152,6 +160,7 @@ def run_training(run_id: int) -> None:
         register_all_modules(init_default_scope=True)
         use_amp = torch.cuda.is_available()
         tp = TrainParams(
+            base=base,
             data_root=snapshot.local_dir,
             class_names=tuple(class_names),
             work_dir=os.path.join(work_root, "mmdet"),
@@ -229,6 +238,7 @@ def run_training(run_id: int) -> None:
             Artifacts(checkpoint_path=ckpt_path, onnx_path=onnx_path, openvino_dir=ov_dir,
                       config_path=config_path, metrics_path=metrics_path),
             kind="trained",
+            architecture=base.architecture,
             input_width=params["width"],
             input_height=params["height"],
             class_names=class_names,

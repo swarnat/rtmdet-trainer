@@ -117,8 +117,6 @@ services:
       TRAINING_QUEUE: training
       TRAINER_WORK_DIR: /tmp/od-work
       BOOTSTRAP_ON_START: ${BOOTSTRAP_ON_START:-true}
-      BASE_CHECKPOINT_URL: ${BASE_CHECKPOINT_URL:-https://download.openmmlab.com/mmdetection/v3.0/rtmdet/rtmdet_s_8xb32-300e_coco/rtmdet_s_8xb32-300e_coco_20220905_161602-387a891e.pth}
-      BASE_CHECKPOINT_SHA256_PREFIX: ${BASE_CHECKPOINT_SHA256_PREFIX:-387a891e}
     # dataloader workers need shared memory
     shm_size: ${TRAINER_SHM_SIZE:-8gb}
     depends_on:

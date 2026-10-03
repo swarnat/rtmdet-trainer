@@ -14,6 +14,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Resolutions offered in the UI
     "input_sizes": ["1536x864", "1280x736", "1024x576", "1920x1088", "768x448"],
     "default_confidence": 0.25,
+    # base model preselected in the training dialog (rtmdet-tiny-coco | rtmdet-s-coco | rtmdet-m-coco)
+    "default_base_model": "rtmdet-s-coco",
     "nms_iou_threshold": 0.6,
     # Fraction of newly labeled images assigned to the validation split (persisted per image)
     "validation_ratio": 0.15,

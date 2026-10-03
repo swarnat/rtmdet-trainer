@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from odcore.architectures import get_base_model
 from odcore.geometry import parse_input_size
 from odcore.settings_store import DEFAULT_SETTINGS, get_all_settings, set_setting
 
@@ -44,6 +45,9 @@ def _validate(key: str, value: Any) -> Any:
         if not 0 <= value <= 20:
             raise ValueError("hard_negative_oversample must be in [0, 20] (0 = no crops)")
         return value
+    if key == "default_base_model":
+        get_base_model(str(value))  # raises KeyError for unknown ids
+        return value
     if key == "validation_ratio":
         value = float(value)
         if not 0.0 < value < 1.0:
@@ -61,7 +65,7 @@ def get_settings(session: Session = Depends(get_db)) -> SettingsOut:
 def update_settings(body: SettingsUpdate, session: Session = Depends(get_db)) -> SettingsOut:
     try:
         cleaned = {k: _validate(k, v) for k, v in body.values.items()}
-    except (ValueError, TypeError) as exc:
+    except (ValueError, TypeError, KeyError) as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     for key, value in cleaned.items():
         set_setting(session, key, value)

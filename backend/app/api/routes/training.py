@@ -6,7 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from odcore.architectures import BASE_MODELS, get_base_model
 from odcore.classes import active_class_names, list_classes
+from odcore.settings_store import get_setting
 from odcore.db import ModelVersion, TrainingRun, TrainingStatus, utcnow
 from odcore.geometry import parse_input_size
 
@@ -19,7 +21,6 @@ from app.services.dataset import eligibility
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/training", tags=["training"])
 
-COCO_BASE_ID = "rtmdet-s-coco"
 
 
 def to_out(run: TrainingRun) -> TrainingRunOut:
@@ -63,17 +64,23 @@ def get_eligibility(classes: str | None = None, session: Session = Depends(get_d
 def base_models(session: Session = Depends(get_db)) -> list[BaseModelOption]:
     options = [
         BaseModelOption(
-            id=COCO_BASE_ID,
-            label="RTMDet-S (COCO-pretrained)",
-            description="Official MMDetection RTMDet-S checkpoint trained on COCO 2017; classification head initialised from the COCO mapping of each class",
+            id=b.id,
+            label=f"{b.label}",
+            description=f"MMDetection checkpoint trained on COCO 2017 (AP {b.coco_ap}, {b.params_m} M parameters); "
+            "classification head initialised from the COCO mapping of each class",
+            architecture=b.architecture,
+            kind="coco",
         )
+        for b in BASE_MODELS
     ]
     for mv in session.execute(select(ModelVersion).where(ModelVersion.kind == "trained").order_by(ModelVersion.id.desc())).scalars():
         options.append(
             BaseModelOption(
                 id=mv.version,
-                label=f"{mv.version} ({mv.status.value})",
+                label=f"{mv.version} ({mv.architecture}, {mv.status.value})",
                 description=f"Continue training from {mv.version} ({mv.input_width}x{mv.input_height}; classes: {', '.join(mv.class_names)})",
+                architecture=mv.architecture,
+                kind="model",
             )
         )
     return options
@@ -86,12 +93,18 @@ def create_run(body: TrainingCreate, session: Session = Depends(get_db)) -> Trai
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
 
-    if body.base_model_id != COCO_BASE_ID:
-        base = session.execute(select(ModelVersion).where(ModelVersion.version == body.base_model_id)).scalars().first()
+    base_model_id = body.base_model_id or get_setting(session, "default_base_model")
+    try:
+        get_base_model(base_model_id)
+    except KeyError:
+        base = session.execute(select(ModelVersion).where(ModelVersion.version == base_model_id)).scalars().first()
         if base is None:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"unknown base model '{body.base_model_id}'")
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"unknown base model '{base_model_id}'")
         if base.kind != "trained":
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"'{base.version}' is not a trained model; use '{COCO_BASE_ID}'")
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                f"'{base.version}' is not a trained model; use one of {[b.id for b in BASE_MODELS]}",
+            )
 
     class_names = resolve_class_names(session, body.class_names)
     elig = eligibility(session, class_names)
@@ -109,7 +122,7 @@ def create_run(body: TrainingCreate, session: Session = Depends(get_db)) -> Trai
 
     run = TrainingRun(
         status=TrainingStatus.queued,
-        base_model_id=body.base_model_id,
+        base_model_id=base_model_id,
         class_names=class_names,
         input_width=width,
         input_height=height,

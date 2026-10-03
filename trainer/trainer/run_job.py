@@ -22,6 +22,7 @@ def main() -> int:
     t.add_argument("run_id", type=int)
     b = sub.add_parser("bootstrap")
     b.add_argument("--force", action="store_true")
+    b.add_argument("--base", default="rtmdet-s-coco", help="base model id, e.g. rtmdet-m-coco")
     args = parser.parse_args()
 
     if args.cmd == "train":
@@ -31,7 +32,7 @@ def main() -> int:
     else:
         from .bootstrap import run_bootstrap
 
-        version = run_bootstrap(force=args.force)
+        version = run_bootstrap(force=args.force, base_id=args.base)
         print(f"bootstrap result: {version or 'skipped'}")
     return 0
 

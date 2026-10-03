@@ -33,7 +33,7 @@ def next_version() -> str:
     return format_version(max(numbers, default=0) + 1)
 
 
-def publish_model(artifacts: Artifacts, *, kind: str, input_width: int, input_height: int, class_names: list[str],
+def publish_model(artifacts: Artifacts, *, kind: str, architecture: str, input_width: int, input_height: int, class_names: list[str],
                   metrics: dict | None, training_run_id: int | None, dataset_snapshot: str | None,
                   class_mapping: dict | None = None, status: ModelStatus = ModelStatus.candidate,
                   notes: str | None = None) -> ModelVersion:
@@ -74,7 +74,7 @@ def publish_model(artifacts: Artifacts, *, kind: str, input_width: int, input_he
                 version=version,
                 status=status,
                 kind=kind,
-                architecture="rtmdet-s",
+                architecture=architecture,
                 input_width=input_width,
                 input_height=input_height,
                 class_names=list(class_names),

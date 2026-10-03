@@ -67,3 +67,19 @@ def test_settings_validation(client):
     assert client.put("/api/v1/settings", json={"values": {"default_input_size": "1000x500"}}).status_code == 422
     res = client.put("/api/v1/settings", json={"values": {"default_confidence": 0.4}})
     assert res.status_code == 200 and res.json()["values"]["default_confidence"] == 0.4
+
+
+def test_base_model_options(client, session_factory):
+    with session_factory() as s:
+        mv = add_version(s, "model-0002", ModelStatus.candidate)
+        mv.kind = "trained"
+        mv.architecture = "rtmdet-m"
+        s.commit()
+    opts = client.get("/api/v1/training/base-models").json()
+    assert [o["id"] for o in opts][:3] == ["rtmdet-tiny-coco", "rtmdet-s-coco", "rtmdet-m-coco"]
+    assert opts[3]["id"] == "model-0002" and opts[3]["architecture"] == "rtmdet-m" and opts[3]["kind"] == "model"
+    assert client.post("/api/v1/training/runs", json={"base_model_id": "rtmdet-xl-coco"}).status_code == 422
+    assert client.post("/api/v1/models/bootstrap", params={"base_model": "rtmdet-xl-coco"}).status_code == 422
+    assert client.put("/api/v1/settings", json={"values": {"default_base_model": "rtmdet-xl-coco"}}).status_code == 422
+    res = client.put("/api/v1/settings", json={"values": {"default_base_model": "rtmdet-m-coco"}})
+    assert res.json()["values"]["default_base_model"] == "rtmdet-m-coco"

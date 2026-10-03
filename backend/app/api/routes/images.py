@@ -10,7 +10,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from odcore.classes import active_class_names, is_reviewed_for
-from odcore.db import AnnotationStatus, DatasetSplit, Image
+from sqlalchemy import select
+
+from odcore.db import AnnotationStatus, DatasetSplit, Image, ImageSuggestion
 from odcore.geometry import decode_image
 from odcore.storage import ObjectStorage
 
@@ -20,6 +22,7 @@ from app.core.database import get_db
 from app.core.s3 import get_storage
 from app.db.repositories import images as repo
 from app.schemas.annotation import AnnotationOut, ImageDetail, ImageList, ImageOut, ImageUpdate, UploadResult
+from app.schemas.batch_test import SuggestionOut
 from app.schemas.detection import DetectResponse
 from app.services import annotation as annotation_service
 from app.services.dataset import dataset_stats, needs_review_ids
@@ -51,12 +54,22 @@ def to_out(image: Image, count: int, active: list[str] | None = None, hard_negat
     return out
 
 
-def to_detail(image: Image, active: list[str]) -> ImageDetail:
+def suggestions_for(session: Session, image_ids: list[int]) -> dict[int, ImageSuggestion]:
+    if not image_ids:
+        return {}
+    rows = session.execute(select(ImageSuggestion).where(ImageSuggestion.image_id.in_(image_ids))).scalars()
+    return {s.image_id: s for s in rows}
+
+
+def to_detail(image: Image, active: list[str], session: Session) -> ImageDetail:
     positives = sum(1 for a in image.annotations if a.type == "positive")
     base = to_out(image, positives, active, len(image.annotations) - positives)
+    suggestion = suggestions_for(session, [image.id]).get(image.id)
+    base.suggestion_count = len(suggestion.detections_json) if suggestion else None
     return ImageDetail(
         **base.model_dump(),
         annotations=[AnnotationOut.model_validate(a) for a in image.annotations],
+        suggestion=SuggestionOut.model_validate(suggestion) if suggestion else None,
     )
 
 
@@ -123,21 +136,26 @@ def list_images(
     split: Optional[DatasetSplit] = None,
     negative: bool = False,
     needs_review: bool = Query(False, description="labeled images not yet checked for all active classes"),
+    has_suggestions: bool = Query(False, description="images with open batch-test suggestions"),
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     session: Session = Depends(get_db),
 ) -> ImageList:
     restrict = needs_review_ids(session) if needs_review else None
+    if has_suggestions:
+        with_suggestions = list(session.execute(select(ImageSuggestion.image_id)).scalars())
+        restrict = with_suggestions if restrict is None else sorted(set(restrict) & set(with_suggestions))
     total, items = repo.list_images(session, status_filter, split, negative, restrict, offset, limit)
     counts = repo.annotation_counts(session, [i.id for i in items])
     active = active_class_names(session)
-    return ImageList(
-        total=total,
-        items=[
-            to_out(i, counts.get(i.id, {}).get("positive", 0), active, counts.get(i.id, {}).get("hard_negative", 0))
-            for i in items
-        ],
-    )
+    suggestions = suggestions_for(session, [i.id for i in items])
+    out = []
+    for i in items:
+        o = to_out(i, counts.get(i.id, {}).get("positive", 0), active, counts.get(i.id, {}).get("hard_negative", 0))
+        if i.id in suggestions:
+            o.suggestion_count = len(suggestions[i.id].detections_json)
+        out.append(o)
+    return ImageList(total=total, items=out)
 
 
 @router.get("/stats", summary="Dataset statistics")
@@ -147,7 +165,7 @@ def stats(session: Session = Depends(get_db)) -> dict:
 
 @router.get("/{image_id}", response_model=ImageDetail, summary="Image metadata with annotations")
 def get_image(image_id: int, session: Session = Depends(get_db)) -> ImageDetail:
-    return to_detail(get_image_or_404(session, image_id), active_class_names(session))
+    return to_detail(get_image_or_404(session, image_id), active_class_names(session), session)
 
 
 @router.get("/{image_id}/neighbours", summary="Previous/next image id (optionally within a status)")
@@ -190,7 +208,7 @@ def update_image(image_id: int, body: ImageUpdate, session: Session = Depends(ge
         image.dataset_split = DatasetSplit(body.dataset_split)
     session.commit()
     session.refresh(image)
-    return to_detail(image, active_class_names(session))
+    return to_detail(image, active_class_names(session), session)
 
 
 @router.delete("/{image_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete an image and its annotations")

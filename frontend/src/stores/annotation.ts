@@ -31,6 +31,8 @@ export const useAnnotationStore = defineStore('annotation', () => {
   const boxes = ref<EditBox[]>([])
   const predictions = ref<Prediction[]>([])
   const lastDetection = ref<DetectResponse | null>(null)
+  /** predictions shown come from a stored batch-test suggestion (not a live test) */
+  const fromSuggestion = ref<ImageDetail['suggestion']>(null)
   const selectedId = ref<string | null>(null)
   const activeClass = ref<ClassName>('')
   const dirty = ref(false)
@@ -61,9 +63,33 @@ export const useAnnotationStore = defineStore('annotation', () => {
     }))
     predictions.value = []
     lastDetection.value = null
+    fromSuggestion.value = null
     selectedId.value = null
     history.value = []
     dirty.value = false
+    if (detail.suggestion) loadSuggestion(detail)
+  }
+
+  /** Show batch-test suggestions as predictions, minus those already covered by a box of the same class. */
+  function loadSuggestion(detail: ImageDetail) {
+    const s = detail.suggestion!
+    setDetection({
+      image: { width: detail.width, height: detail.height },
+      model: { version: s.model_version, status: 'batch', input_width: s.input_width, input_height: s.input_height },
+      inference_ms: 0,
+      detections: s.detections.filter(
+        (d) => !boxes.value.some((b) => b.class === d.class && iou(b, d.bbox) >= 0.5),
+      ),
+    })
+    fromSuggestion.value = s
+  }
+
+  function iou(a: { x1: number; y1: number; x2: number; y2: number }, b: { x1: number; y1: number; x2: number; y2: number }) {
+    const iw = Math.max(0, Math.min(a.x2, b.x2) - Math.max(a.x1, b.x1))
+    const ih = Math.max(0, Math.min(a.y2, b.y2) - Math.max(a.y1, b.y1))
+    const inter = iw * ih
+    const union = (a.x2 - a.x1) * (a.y2 - a.y1) + (b.x2 - b.x1) * (b.y2 - b.y1) - inter
+    return union > 0 ? inter / union : 0
   }
 
   function clamp(b: EditBox): EditBox {
@@ -121,6 +147,7 @@ export const useAnnotationStore = defineStore('annotation', () => {
 
   function setDetection(res: DetectResponse) {
     lastDetection.value = res
+    fromSuggestion.value = null
     predictions.value = res.detections.map((d) => ({
       uid: uid('p'),
       class: d.class,
@@ -177,6 +204,7 @@ export const useAnnotationStore = defineStore('annotation', () => {
   function clearPredictions() {
     predictions.value = []
     lastDetection.value = null
+    fromSuggestion.value = null
   }
 
   async function save(markLabeled = true) {
@@ -200,16 +228,18 @@ export const useAnnotationStore = defineStore('annotation', () => {
       )
       const preds = predictions.value
       const det = lastDetection.value
+      const sug = fromSuggestion.value
       load(detail)
       predictions.value = preds
       lastDetection.value = det
+      fromSuggestion.value = sug
     } finally {
       saving.value = false
     }
   }
 
   return {
-    image, boxes, predictions, lastDetection, selectedId, activeClass, dirty, saving, history,
+    image, boxes, predictions, lastDetection, fromSuggestion, selectedId, activeClass, dirty, saving, history,
     selectedBox, selectedPrediction,
     load, addBox, updateBox, deleteSelected, setClassForSelected, undo,
     setDetection, acceptable, acceptPrediction, markHardNegative, acceptAllPredictions, clearPredictions, save,

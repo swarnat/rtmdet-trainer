@@ -5,6 +5,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.batch_test import SuggestionOut
+
 
 class AnnotationIn(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
@@ -63,6 +65,8 @@ class ImageOut(BaseModel):
     dataset_split: Optional[str]
     annotation_count: int = Field(0, description="positive boxes")
     hard_negative_count: int = 0
+    # number of open batch-test suggestions (None = no suggestions stored)
+    suggestion_count: Optional[int] = None
     reviewed_classes: Optional[list[str]] = None
     # labeled, but not checked for all currently active classes
     needs_review: bool = False
@@ -73,6 +77,7 @@ class ImageOut(BaseModel):
 
 class ImageDetail(ImageOut):
     annotations: list[AnnotationOut]
+    suggestion: Optional[SuggestionOut] = None
 
 
 class ImageList(BaseModel):

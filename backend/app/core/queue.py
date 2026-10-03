@@ -29,6 +29,6 @@ def enqueue_training(run_id: int) -> str:
     return job.id
 
 
-def enqueue_bootstrap(force: bool = False) -> str:
-    job = get_queue().enqueue(BOOTSTRAP_JOB, force, job_timeout=3600, result_ttl=86400, failure_ttl=7 * 86400)
+def enqueue_bootstrap(force: bool = False, base_id: str = "rtmdet-s-coco") -> str:
+    job = get_queue().enqueue(BOOTSTRAP_JOB, force, base_id, job_timeout=3600, result_ttl=86400, failure_ttl=7 * 86400)
     return job.id

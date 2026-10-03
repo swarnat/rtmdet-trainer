@@ -7,7 +7,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class TrainingCreate(BaseModel):
-    base_model_id: str = Field("rtmdet-s-coco", description="'rtmdet-s-coco' or an existing model version, e.g. 'model-0002'")
+    base_model_id: Optional[str] = Field(
+        None,
+        description="'rtmdet-tiny-coco', 'rtmdet-s-coco', 'rtmdet-m-coco' or an existing model version to continue "
+        "training (same size), e.g. 'model-0002'. Default: setting 'default_base_model'",
+    )
     class_names: Optional[list[str]] = Field(None, description="Classes to train (default: all active classes, in configured order)")
     input_size: str = Field("1536x864", examples=["1536x864"])
     epochs: int = Field(30, ge=1, le=1000)
@@ -50,6 +54,8 @@ class BaseModelOption(BaseModel):
     id: str
     label: str
     description: str
+    architecture: str
+    kind: str  # "coco" or "model"
 
 
 class SplitCount(BaseModel):

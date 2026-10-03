@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from app.api.routes import annotations, classes, detect, images, models, settings, training
+from app.api.routes import annotations, batch_tests, classes, detect, images, models, settings, training
 from app.core.config import get_settings
 
 API_PREFIX = "/api/v1"
@@ -19,7 +20,22 @@ logging.basicConfig(
 )
 log = logging.getLogger("app")
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    from app.core.database import get_sessionmaker
+    from app.services.batch_test import fail_interrupted_batches
+
+    try:
+        with get_sessionmaker()() as session:
+            if n := fail_interrupted_batches(session):
+                log.warning("marked %d interrupted batch test(s) as failed", n)
+    except Exception:  # DB not reachable yet: health check reports it
+        log.exception("could not clean up batch tests on startup")
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="Object Detection Training & Inference",
     version="0.1.0",
     description=(
@@ -68,5 +84,5 @@ def health() -> JSONResponse:
     return JSONResponse(status_code=200 if ok else 503, content={"status": "ok" if ok else "degraded", "checks": checks})
 
 
-for router in (health_router, detect.router, classes.router, images.router, annotations.router, training.router, models.router, settings.router):
+for router in (health_router, detect.router, batch_tests.router, classes.router, images.router, annotations.router, training.router, models.router, settings.router):
     app.include_router(router, prefix=API_PREFIX)
