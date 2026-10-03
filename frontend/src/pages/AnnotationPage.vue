@@ -18,7 +18,7 @@
         <div v-if="store.image" class="col text-body2 ellipsis" style="min-width: 0">
           <b>#{{ store.image.id }}</b> {{ store.image.original_filename }} · {{ store.image.width }}×{{ store.image.height }}
           <q-badge :color="store.image.annotation_status === 'labeled' ? 'green-7' : 'grey-6'" class="q-ml-sm">
-            {{ store.image.annotation_status === 'labeled' ? (store.image.annotations.length ? 'annotiert' : 'negativ') : 'offen' }}
+            {{ store.image.annotation_status === 'labeled' ? (store.image.annotation_count ? 'annotiert' : 'negativ') : 'offen' }}
           </q-badge>
           <q-badge v-if="store.image.dataset_split" outline color="blue-grey" class="q-ml-xs">{{ store.image.dataset_split }}</q-badge>
           <q-badge v-if="store.image.needs_review" color="amber-9" class="q-ml-xs">nachprüfen</q-badge>
@@ -85,7 +85,7 @@
           :show-predictions="showPredictions"
           @select="(id) => (store.selectedId = id)"
           @change="(id, c) => store.updateBox(id, c)"
-          @create="(c) => store.addBox({ ...c, class: store.activeClass, source: 'manual' })"
+          @create="(c) => store.addBox({ ...c, class: store.activeClass, type: 'positive', source: 'manual' })"
           @accept="(id) => store.acceptPrediction(id)"
         />
         <div v-else class="absolute-center text-grey-6 text-h6">Bild links auswählen oder hochladen</div>
@@ -101,13 +101,13 @@
             Noch nicht geprüft auf: <b>{{ missingClasses.map((c) => classes.info(c).label).join(', ') }}</b>.
             Bild auf diese Klassen prüfen und speichern – erst dann wird es für Trainings mit diesen Klassen verwendet.
           </q-banner>
-          <div class="text-subtitle2 q-mb-xs">Annotationen ({{ store.boxes.length }})</div>
-          <div v-if="store.image && !store.boxes.length" class="text-caption text-grey-7 q-mb-sm">
-            Keine Boxen. Speichern markiert das Bild als <b>negatives Trainingsbild</b>.
+          <div class="text-subtitle2 q-mb-xs">Annotationen ({{ positives.length }})</div>
+          <div v-if="store.image && !positives.length" class="text-caption text-grey-7 q-mb-sm">
+            Keine Objekte. Speichern markiert das Bild als <b>negatives Trainingsbild</b>.
           </div>
-          <q-list dense bordered separator class="rounded-borders">
+          <q-list v-if="positives.length" dense bordered separator class="rounded-borders">
             <q-item
-              v-for="(b, i) in store.boxes"
+              v-for="(b, i) in positives"
               :key="b.uid"
               clickable
               :active="b.uid === store.selectedId"
@@ -128,6 +128,41 @@
               </q-item-section>
             </q-item>
           </q-list>
+
+          <template v-if="hardNegatives.length">
+            <div class="text-subtitle2 q-mt-md q-mb-xs">
+              Hard Negatives ({{ hardNegatives.length }})
+              <q-icon name="help_outline" size="xs" color="grey-7">
+                <q-tooltip max-width="320px">
+                  Bekannte Fehlalarme: Regionen, die ein Modell fälschlich als diese Klasse erkannt hat. Sie werden nicht als eigene Klasse
+                  trainiert, sondern als Hintergrund-Ausschnitte (oversampled) und nach jedem Training als Regressionstest geprüft.
+                </q-tooltip>
+              </q-icon>
+            </div>
+            <q-list dense bordered separator class="rounded-borders">
+              <q-item
+                v-for="b in hardNegatives"
+                :key="b.uid"
+                clickable
+                :active="b.uid === store.selectedId"
+                active-class="bg-grey-4"
+                @click="store.selectedId = b.uid"
+              >
+                <q-item-section avatar style="min-width: 24px">
+                  <q-icon name="block" size="xs" :style="{ color: classes.info(b.class).color }" />
+                </q-item-section>
+                <q-item-section>
+                  <q-item-label>kein(e) {{ classes.info(b.class).label }}</q-item-label>
+                  <q-item-label caption>
+                    {{ b.source_model ?? 'manuell' }}<span v-if="b.source_confidence != null"> · {{ (b.source_confidence * 100).toFixed(0) }} %</span>
+                  </q-item-label>
+                </q-item-section>
+                <q-item-section side>
+                  <q-btn dense flat round size="sm" icon="close" @click.stop="removeBox(b.uid)" />
+                </q-item-section>
+              </q-item>
+            </q-list>
+          </template>
 
           <q-separator class="q-my-md" />
 
@@ -179,6 +214,19 @@
                 @click="store.acceptAllPredictions()"
               />
             </div>
+            <q-btn
+              dense
+              outline
+              no-caps
+              color="grey-9"
+              icon="block"
+              label="Als False Positive / Hard Negative markieren"
+              class="full-width q-mt-xs"
+              :disable="!store.selectedPrediction || !store.acceptable(store.selectedPrediction)"
+              @click="store.markHardNegative(store.selectedId!)"
+            >
+              <q-tooltip>Ausgewählte Prediction ist ein Fehlalarm (Taste N)</q-tooltip>
+            </q-btn>
             <q-list dense bordered separator class="rounded-borders q-mt-sm">
               <q-item
                 v-for="p in store.predictions"
@@ -197,7 +245,14 @@
                   <q-item-label v-if="!store.acceptable(p)" caption class="text-warning">Klasse hier nicht aktiv – nicht übernehmbar</q-item-label>
                 </q-item-section>
                 <q-item-section side>
-                  <q-btn dense flat round size="sm" icon="add_task" color="deep-purple" :disable="!store.acceptable(p)" @click.stop="store.acceptPrediction(p.uid)" />
+                  <div class="row no-wrap">
+                    <q-btn dense flat round size="sm" icon="add_task" color="deep-purple" :disable="!store.acceptable(p)" @click.stop="store.acceptPrediction(p.uid)">
+                      <q-tooltip>Übernehmen</q-tooltip>
+                    </q-btn>
+                    <q-btn dense flat round size="sm" icon="block" color="grey-9" :disable="!store.acceptable(p)" @click.stop="store.markHardNegative(p.uid)">
+                      <q-tooltip>Als False Positive / Hard Negative markieren</q-tooltip>
+                    </q-btn>
+                  </div>
                 </q-item-section>
               </q-item>
             </q-list>
@@ -224,6 +279,7 @@
               <div><b>Entf</b> Box löschen · <b>Esc</b> Auswahl aufheben</div>
               <div><b>Strg+S</b> speichern · <b>Strg+Z</b> rückgängig</div>
               <div><b>Enter</b> Prediction übernehmen · <b>Umschalt+A</b> alle übernehmen</div>
+              <div><b>N</b> ausgewählte Prediction als False Positive / Hard Negative markieren</div>
               <div><b>T</b> Modell testen · <b>H</b> Predictions ein/aus</div>
               <div><b>Bild ↑ / Bild ↓</b> vorheriges / nächstes Bild</div>
               <div>Mausrad: Zoom · Leertaste/Mitteltaste/Rechtsklick + Ziehen: verschieben</div>
@@ -257,6 +313,8 @@ const classes = useClassesStore()
 const classOptions = computed(() =>
   classes.active.map((c) => ({ value: c.name, label: c.label, color: c.color, key: classes.shortcuts[c.name] ?? '' })),
 )
+const positives = computed(() => store.boxes.filter((b) => b.type !== 'hard_negative'))
+const hardNegatives = computed(() => store.boxes.filter((b) => b.type === 'hard_negative'))
 const missingClasses = computed(() => {
   const reviewed = new Set(store.image?.reviewed_classes ?? [])
   return classes.active.map((c) => c.name).filter((n) => !reviewed.has(n))
@@ -355,10 +413,13 @@ async function save(next: boolean) {
   try {
     await store.save(true)
     const img = store.image
-    browser.value?.patch({ ...img, annotation_count: img.annotations.length })
+    browser.value?.patch(img)
     $q.notify({
       type: 'positive',
-      message: img.annotations.length ? `${img.annotations.length} Boxen gespeichert` : 'Als negatives Trainingsbild gespeichert',
+      message: positives.value.length
+        ? `${positives.value.length} Boxen gespeichert`
+        : 'Als negatives Trainingsbild gespeichert',
+      caption: hardNegatives.value.length ? `${hardNegatives.value.length} Hard Negatives` : undefined,
       timeout: 1500,
     })
     await loadNeighbours()
@@ -391,7 +452,7 @@ async function markUnlabeled() {
   if (!store.image) return
   const detail = await api.updateImage(store.image.id, { annotation_status: 'unlabeled' })
   store.load(detail)
-  browser.value?.patch({ ...detail, annotation_count: detail.annotations.length })
+  browser.value?.patch(detail)
 }
 
 function deleteImage() {
@@ -437,6 +498,8 @@ function onKeydown(e: KeyboardEvent) {
     store.deleteSelected()
   } else if (e.key === 'Escape') {
     store.selectedId = null
+  } else if (e.key.toLowerCase() === 'n' && store.selectedPrediction) {
+    store.markHardNegative(store.selectedPrediction.uid)
   } else if (e.key === 'Enter' && store.selectedPrediction) {
     store.acceptPrediction(store.selectedPrediction.uid)
   } else if (e.key === 'A' && e.shiftKey) {

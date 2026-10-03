@@ -37,11 +37,12 @@ def get_image_or_404(session: Session, image_id: int) -> Image:
     return image
 
 
-def to_out(image: Image, count: int, active: list[str] | None = None) -> ImageOut:
+def to_out(image: Image, count: int, active: list[str] | None = None, hard_negatives: int = 0) -> ImageOut:
     out = ImageOut.model_validate(image)
     out.annotation_status = image.annotation_status.value
     out.dataset_split = image.dataset_split.value if image.dataset_split else None
     out.annotation_count = count
+    out.hard_negative_count = hard_negatives
     out.needs_review = (
         active is not None
         and image.annotation_status == AnnotationStatus.labeled
@@ -51,7 +52,8 @@ def to_out(image: Image, count: int, active: list[str] | None = None) -> ImageOu
 
 
 def to_detail(image: Image, active: list[str]) -> ImageDetail:
-    base = to_out(image, len(image.annotations), active)
+    positives = sum(1 for a in image.annotations if a.type == "positive")
+    base = to_out(image, positives, active, len(image.annotations) - positives)
     return ImageDetail(
         **base.model_dump(),
         annotations=[AnnotationOut.model_validate(a) for a in image.annotations],
@@ -66,7 +68,7 @@ def store_upload(session: Session, storage: ObjectStorage, filename: Optional[st
 
     existing = repo.get_by_sha(session, decoded.sha256)
     if existing is not None:
-        return UploadResult(filename=filename, status="duplicate", image=to_out(existing, len(existing.annotations)))
+        return UploadResult(filename=filename, status="duplicate", image=to_out(existing, sum(1 for a in existing.annotations if a.type == "positive")))
 
     bucket = storage.settings.bucket_images
     key = f"images/{decoded.sha256[:2]}/{decoded.sha256}{decoded.extension}"
@@ -129,7 +131,13 @@ def list_images(
     total, items = repo.list_images(session, status_filter, split, negative, restrict, offset, limit)
     counts = repo.annotation_counts(session, [i.id for i in items])
     active = active_class_names(session)
-    return ImageList(total=total, items=[to_out(i, counts.get(i.id, 0), active) for i in items])
+    return ImageList(
+        total=total,
+        items=[
+            to_out(i, counts.get(i.id, {}).get("positive", 0), active, counts.get(i.id, {}).get("hard_negative", 0))
+            for i in items
+        ],
+    )
 
 
 @router.get("/stats", summary="Dataset statistics")

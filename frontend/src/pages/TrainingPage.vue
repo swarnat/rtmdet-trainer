@@ -53,7 +53,7 @@
             </div>
             <div v-if="elig" class="text-caption">
               Verwendbar: <b>{{ elig.usable.train }}</b> train / <b>{{ elig.usable.validation }}</b> val
-              (davon {{ elig.negative }} negativ).
+              (davon {{ elig.negative }} negativ), {{ elig.hard_negatives }} Hard Negatives.
               <span v-if="elig.needs_review" class="text-warning">
                 {{ elig.needs_review }} annotierte Bilder sind für diese Klassen noch nicht geprüft und werden ausgelassen.
               </span>
@@ -131,6 +131,10 @@
                   val {{ selected.dataset_stats_json.validation?.images }} / {{ selected.dataset_stats_json.validation?.boxes }}
                   <span v-if="selected.dataset_stats_json.excluded_needs_review">
                     · {{ selected.dataset_stats_json.excluded_needs_review }} ungeprüft ausgelassen
+                  </span>
+                  <span v-if="selected.dataset_stats_json.hard_negatives?.total">
+                    · {{ selected.dataset_stats_json.hard_negatives.total }} Hard Negatives
+                    ({{ selected.dataset_stats_json.hard_negatives.train_crops }} Crops × {{ selected.dataset_stats_json.hard_negatives.oversample }})
                   </span>
                 </div>
               </div>

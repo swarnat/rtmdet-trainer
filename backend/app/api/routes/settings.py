@@ -29,6 +29,21 @@ def _validate(key: str, value: Any) -> Any:
         if not 0.0 < value <= 1.0:
             raise ValueError(f"{key} must be in (0, 1]")
         return value
+    if key == "hard_negative_context_factor":
+        value = float(value)
+        if not 1.0 <= value <= 10.0:
+            raise ValueError("hard_negative_context_factor must be in [1, 10]")
+        return value
+    if key == "hard_negative_min_crop_fraction":
+        value = float(value)
+        if not 0.05 <= value <= 1.0:
+            raise ValueError("hard_negative_min_crop_fraction must be in [0.05, 1]")
+        return value
+    if key == "hard_negative_oversample":
+        value = int(value)
+        if not 0 <= value <= 20:
+            raise ValueError("hard_negative_oversample must be in [0, 20] (0 = no crops)")
+        return value
     if key == "validation_ratio":
         value = float(value)
         if not 0.0 < value < 1.0:

@@ -8,15 +8,19 @@ from sqlalchemy.orm import Session
 from odcore.db import Annotation, AnnotationStatus, DatasetSplit, Image
 
 
-def annotation_counts(session: Session, image_ids: list[int]) -> dict[int, int]:
+def annotation_counts(session: Session, image_ids: list[int]) -> dict[int, dict[str, int]]:
+    """``{image id: {"positive": n, "hard_negative": m}}``"""
     if not image_ids:
         return {}
     rows = session.execute(
-        select(Annotation.image_id, func.count(Annotation.id))
+        select(Annotation.image_id, Annotation.type, func.count(Annotation.id))
         .where(Annotation.image_id.in_(image_ids))
-        .group_by(Annotation.image_id)
+        .group_by(Annotation.image_id, Annotation.type)
     ).all()
-    return {image_id: n for image_id, n in rows}
+    result: dict[int, dict[str, int]] = {}
+    for image_id, kind, n in rows:
+        result.setdefault(image_id, {})[kind] = n
+    return result
 
 
 def list_images(
@@ -38,7 +42,8 @@ def list_images(
     if negative_only:
         stmt = stmt.where(
             Image.annotation_status == AnnotationStatus.labeled,
-            ~select(Annotation.id).where(Annotation.image_id == Image.id).exists(),
+            # negative = no real objects (hard negatives don't count as objects)
+            ~select(Annotation.id).where(Annotation.image_id == Image.id, Annotation.type == "positive").exists(),
         )
     total = session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     items = session.execute(stmt.order_by(Image.id).offset(offset).limit(limit)).scalars().all()

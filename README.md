@@ -72,8 +72,11 @@ Die Klassen samt COCO-Mapping werden unter **Klassen** gepflegt (Tabelle `detect
 | `T` | Modell testen |
 | `H` | Predictions ein-/ausblenden |
 | `Enter` / Doppelklick | ausgewählte Prediction übernehmen |
+| `N` | ausgewählte Prediction als False Positive / Hard Negative markieren |
 | `Umschalt+A` | alle Predictions übernehmen |
 | `Bild↑` / `Bild↓` | vorheriges / nächstes Bild |
+
+**Hard Negatives:** Erkennt ein Modell etwas fälschlich (z. B. ein Hinweisschild als Person), markiert „Als False Positive / Hard Negative markieren“ (Taste `N` oder ⊘ in der Prediction-Liste) die Region als bekannten Fehlalarm dieser Klasse. Im Canvas erscheinen Hard Negatives abgedunkelt, kurz gestrichelt und mit „⊘ HN“-Label; in der Seitenleiste haben sie eine eigene Liste. Ein Bild nur mit Hard Negatives zählt als negatives Bild. Details unter [Hard Negatives](#hard-negatives).
 
 **Modell testen:** Production-Modell, neuesten Candidate oder eine beliebige Version wählen, dazu Eingangsauflösung und Confidence. Die API führt eine normale Detection auf dem gespeicherten Bild aus. Predictions erscheinen gestrichelt, kursiv, mit ⚡ und Confidence und sind so klar von manuellen Annotationen zu unterscheiden. „Prediction übernehmen“ bzw. „Alle übernehmen“ macht daraus normale, editierbare Annotationen (Quelle `prediction`).
 
@@ -133,7 +136,7 @@ Weitere Endpunkte (Auszug):
 |----------------|-------|
 | `POST /api/v1/images` | Trainingsbilder hochladen (multipart, mehrere `files`) |
 | `GET /api/v1/images?status=unlabeled&negative=false` | Bilder auflisten |
-| `GET/PUT /api/v1/images/{id}/annotations` | Annotationen lesen / komplett ersetzen (`[]` = negatives Bild) |
+| `GET/PUT /api/v1/images/{id}/annotations` | Annotationen lesen / komplett ersetzen (`[]` = negatives Bild); `type`: `positive` oder `hard_negative` (+ `source_confidence`, `source_model`) |
 | `POST /api/v1/images/{id}/detect` | Modelltest auf gespeichertem Bild |
 | `POST /api/v1/training/runs` | Training starten |
 | `GET /api/v1/training/runs/{id}` / `…/log` / `POST …/cancel` | Status, Log, Abbruch |
@@ -170,6 +173,23 @@ Die **COCO-Quellklassen** sind optional und werden verwendet
 
 Nach einer Mapping-Änderung unter „Modelle“ das COCO-Basismodell neu importieren (oder `python3 scripts/bootstrap-model.py --url http://localhost:8080`).
 
+### Hard Negatives
+
+Eine Annotation hat den Typ `positive` (echtes Objekt) oder `hard_negative` (Region, die ein Modell fälschlich als `class` erkannt hat):
+
+```json
+{ "type": "hard_negative", "class": "person", "x1": 100, "y1": 80, "x2": 140, "y2": 150,
+  "source": "prediction", "source_confidence": 0.40, "source_model": "model-0003" }
+```
+
+Hard Negatives werden **nicht** als zusätzliche Klasse (etwa `not_person`) trainiert, und es gibt keinen eigenen Loss. Stattdessen:
+
+1. **Training:** Das Originalbild wird normal verwendet, ohne Box an dieser Stelle. Für jedes Hard Negative eines *Trainingsbildes* erzeugt der Snapshot zusätzlich einen Ausschnitt `images/hn_<id>.jpg`: Box × Kontextfaktor (Standard 3) je Seite, auf 16:9 erweitert, mindestens 25 % der Bildbreite. Die Mindestgröße verhindert, dass MMDetection winzige Ausschnitte beim Skalieren auf die Modellauflösung stark vergrößert und die Struktur so in einem unrealistischen Maßstab gelernt wird. Der Ausschnitt enthält keine Box für die falsche Erkennung. Echte annotierte Objekte darin werden auf Ausschnittkoordinaten transformiert und geclippt. Jeder Ausschnitt wird mehrfach in `train.json` aufgenommen (Oversampling, Standard 3×). RTMDet lernt so über den normalen Background-Loss, dass diese Struktur kein `person` ist.
+2. **Regressionstest nach jedem Training:** Für alle Hard Negatives der Trainingsklassen (Trainings- und Validierungsbilder) wird geprüft, ob das neue Modell dort wieder dieselbe Klasse erkennt (Confidence ≥ `eval_confidence`, IoU ≥ 0.5). Gespeichert werden pro Klasse Anzahl, „weiterhin falsch erkannt“ und HN-FP-Rate, gesamt und separat nur für Validierungsbilder (die das Modell nicht als Crop gesehen hat).
+3. **Fairer Vergleich:** Zusätzlich wird das aktuelle Production-Modell auf denselben Validierungsbildern und Hard Negatives ausgewertet. Die UI zeigt pro Klasse die Deltas für Recall, Precision, mAP und HN-FP-Rate und warnt, wenn ein Modell weniger Fehlalarme hat, aber auch weniger echte Objekte findet (Recall-Rückgang > 2 Prozentpunkte). Ein Modell gilt also nicht schon deshalb als besser, weil es generell weniger erkennt.
+
+Einstellungen (unter **Einstellungen**): `hard_negative_context_factor`, `hard_negative_min_crop_fraction`, `hard_negative_oversample` (0 = keine Crops, nur Regressionstest). Bei sehr vielen Hard Negatives im Verhältnis zu den Originalbildern das Oversampling reduzieren und auf den Recall im Vergleich achten.
+
 ### Bildauflösung & Letterboxing
 
 Das Originalbild wird mit erhaltenem Seitenverhältnis auf die Modellauflösung skaliert (`scale = min(W/w, H/h)`), oben links platziert und rechts/unten mit dem Wert 114 aufgefüllt. Das ist dieselbe Konvention wie MMDetections `Resize(keep_ratio=True)` + `Pad` im Training. 16:9-Bilder auf `1536x864` brauchen kein Padding. Modellauflösungen müssen Vielfache von 32 sein. Die Rückrechnung der Boxen geschieht durch Division durch `scale` mit anschließendem Clipping auf das Originalbild (`common/odcore/geometry.py`). Die Annotationen werden immer in Originalpixeln gespeichert. Hinweis: Hochformatbilder werden bei der Inferenz korrekt behandelt, im Training (MMDetection-`Resize`) sind aber Querformatbilder vorgesehen.
@@ -191,6 +211,7 @@ annotations/val.json
 images/<sha256>.<ext>    Kopien der Bilder (bleiben erhalten, auch wenn Bilder später gelöscht werden)
 ```
 
+* Zusätzlich: `annotations/hard_negatives.json` (alle Hard Negatives des Snapshots) und `images/hn_<id>.jpg` (Hard-Negative-Ausschnitte, siehe oben).
 * Es werden alle Bilder mit Status `labeled` verwendet, die für alle Klassen des Laufs geprüft sind, **inklusive negativer Bilder ohne Boxen** (in der Trainings-Pipeline auch über `filter_empty_gt=False`, `allow_negative_crop=True` usw.).
 * Der Split (`train`/`validation`, Default 85/15) wird beim ersten Labeln deterministisch aus dem Bild-Hash bestimmt und am Bild **persistiert**. Er wird nie neu gewürfelt, auch nicht bei geändertem Validierungsanteil. Manuelles Umsetzen ist per `PATCH /api/v1/images/{id}` möglich.
 * Der Snapshot entsteht beim **Start** des Laufs (nicht beim Einreihen).
@@ -210,6 +231,7 @@ Ausgewertet wird das **exportierte OpenVINO-Modell** auf dem Validierungssplit, 
 
 * **mAP50, mAP50-95** (COCO-Protokoll via pycocotools): gesamt, pro Klasse und pro Boxgröße (klein < 32², mittel < 96², groß; Fläche in Originalpixeln), dazu mAP für kleine Objekte pro Klasse.
 * **Precision / Recall** bei Confidence ≥ `eval_confidence` (Default 0.25) und IoU 0.5 mit greedy 1:1-Matching: gesamt, pro Klasse, pro Boxgröße, inklusive TP/FP/FN.
+* **Hard-Negative-Regressionstest** pro Klasse und der **Vergleich mit dem Production-Modell** (siehe [Hard Negatives](#hard-negatives)).
 * Zusätzlich der Verlauf der MMDetection-Validierung je Epoche.
 
 ## Datenmodell
@@ -217,7 +239,7 @@ Ausgewertet wird das **exportierte OpenVINO-Modell** auf dem Validierungssplit, 
 | Tabelle | Wichtigste Felder |
 |---------|-------------------|
 | `images` | `s3_object_key`, `sha256` (unique), `width`, `height`, `annotation_status` (`unlabeled`/`labeled`), `dataset_split`, `reviewed_classes`, `created_at`, `updated_at` |
-| `annotations` | `image_id`, `class_name`, `x1`, `y1`, `x2`, `y2` (Originalpixel), `source` (`manual`/`prediction`) |
+| `annotations` | `image_id`, `class_name`, `x1`, `y1`, `x2`, `y2` (Originalpixel), `type` (`positive`/`hard_negative`), `source` (`manual`/`prediction`), `source_confidence`, `source_model` |
 | `detection_classes` | `name` (unique, fest), `label`, `color`, `coco_classes`, `sort_order`, `active` |
 | `training_runs` | `status`, `base_model_id`, `class_names`, `dataset_snapshot`, `input_width/height`, `epochs`, `batch_size`, `learning_rate`, `started_at`, `finished_at`, `progress_json`, `metrics_json`, `log`, `error` |
 | `model_versions` | `version`, `status`, `kind`, `checkpoint_key`, `onnx_key`, `openvino_key`, `config_key`, `input_width/height`, `class_names`, `metrics_json`, `dataset_snapshot`, `training_run_id`, `created_at`, `activated_at` |

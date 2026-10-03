@@ -14,13 +14,21 @@ from app.schemas.classes import ClassOrder, DetectionClassCreate, DetectionClass
 router = APIRouter(prefix="/classes", tags=["classes"])
 
 
-def _counts(session: Session) -> dict[str, int]:
-    return dict(session.execute(select(Annotation.class_name, func.count(Annotation.id)).group_by(Annotation.class_name)).all())
+def _counts(session: Session) -> dict[str, dict[str, int]]:
+    """``{class: {"positive": n, "hard_negative": m}}``"""
+    result: dict[str, dict[str, int]] = {}
+    rows = session.execute(
+        select(Annotation.class_name, Annotation.type, func.count(Annotation.id)).group_by(Annotation.class_name, Annotation.type)
+    ).all()
+    for name, kind, n in rows:
+        result.setdefault(name, {})[kind] = n
+    return result
 
 
-def _out(c: DetectionClass, counts: dict[str, int]) -> DetectionClassOut:
+def _out(c: DetectionClass, counts: dict[str, dict[str, int]]) -> DetectionClassOut:
     out = DetectionClassOut.model_validate(c)
-    out.annotation_count = counts.get(c.name, 0)
+    out.annotation_count = counts.get(c.name, {}).get("positive", 0)
+    out.hard_negative_count = counts.get(c.name, {}).get("hard_negative", 0)
     return out
 
 
@@ -106,7 +114,7 @@ def reorder(body: ClassOrder, session: Session = Depends(get_db)) -> list[Detect
 @router.delete("/{name}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete an unused class")
 def delete_class(name: str, session: Session = Depends(get_db)) -> Response:
     c = _get_or_404(session, name)
-    used = _counts(session).get(name, 0)
+    used = sum(_counts(session).get(name, {}).values())
     if used:
         raise HTTPException(status.HTTP_409_CONFLICT, f"class '{name}' has {used} annotations; deactivate it instead")
     if c.active and len(list_classes(session, active_only=True)) <= 1:

@@ -12,9 +12,13 @@ export interface DetectionClass {
   sort_order: number
   active: boolean
   annotation_count: number
+  hard_negative_count: number
   created_at: string
   updated_at: string
 }
+
+/** positive = real object; hard_negative = region a model wrongly detected as `class` */
+export type AnnotationType = 'positive' | 'hard_negative'
 
 export interface Annotation {
   id: number
@@ -23,7 +27,10 @@ export interface Annotation {
   y1: number
   x2: number
   y2: number
+  type: AnnotationType
   source: 'manual' | 'prediction'
+  source_confidence: number | null
+  source_model: string | null
   created_at: string
   updated_at: string
 }
@@ -34,7 +41,10 @@ export interface AnnotationInput {
   y1: number
   x2: number
   y2: number
+  type: AnnotationType
   source: 'manual' | 'prediction'
+  source_confidence?: number | null
+  source_model?: string | null
 }
 
 export interface ImageItem {
@@ -48,6 +58,7 @@ export interface ImageItem {
   annotation_status: 'unlabeled' | 'labeled'
   dataset_split: 'train' | 'validation' | null
   annotation_count: number
+  hard_negative_count: number
   reviewed_classes: string[] | null
   needs_review: boolean
   created_at: string
@@ -97,11 +108,38 @@ export interface Metrics {
   num_boxes?: number
   confidence_for_pr?: number
   overall?: MetricSet
-  per_class?: Record<string, MetricSet>
+  per_class?: Record<string, MetricSet | null>
   per_size?: Record<string, MetricSet>
+  hard_negatives?: HardNegativeMetrics
+  comparison?: Comparison
   mmdet_val_history?: { epoch: number; bbox_mAP?: number; bbox_mAP_50?: number; bbox_mAP_s?: number }[]
   head_init?: Record<string, string>
   note?: string
+}
+
+export interface HardNegativeBucket {
+  total: number
+  still_detected: number
+  fp_rate: number | null
+}
+
+export interface HardNegativeMetrics {
+  confidence: number
+  iou: number
+  overall: HardNegativeBucket
+  validation_only: HardNegativeBucket
+  train_only: HardNegativeBucket
+  per_class: Record<string, HardNegativeBucket>
+}
+
+export interface Comparison {
+  baseline_model: string
+  baseline: { overall: MetricSet; per_class: Record<string, MetricSet | null>; hard_negatives?: HardNegativeMetrics | null }
+  delta_per_class: Record<
+    string,
+    { precision: number | null; recall: number | null; mAP50: number | null; 'mAP50-95': number | null; hard_negative_fp_rate: number | null }
+  >
+  warnings: string[]
 }
 
 export interface ModelVersion {
@@ -151,6 +189,7 @@ export interface TrainingEligibility {
   usable: { train: number; validation: number }
   needs_review: number
   negative: number
+  hard_negatives: number
 }
 
 export interface TrainingRun {
@@ -162,6 +201,7 @@ export interface TrainingRun {
   dataset_stats_json: {
     classes?: string[]
     excluded_needs_review?: number
+    hard_negatives?: { total: number; per_class: Record<string, number>; train_crops: number; oversample: number }
     train?: SplitStats
     validation?: SplitStats
   } | null
@@ -194,6 +234,7 @@ export interface DatasetStats {
   images_needs_review: number
   splits: { train: number; validation: number }
   annotations_per_class: Record<string, number>
+  hard_negatives_per_class: Record<string, number>
 }
 
 export type Settings = Record<string, unknown> & {
@@ -203,6 +244,9 @@ export type Settings = Record<string, unknown> & {
   nms_iou_threshold: number
   validation_ratio: number
   eval_confidence: number
+  hard_negative_context_factor: number
+  hard_negative_min_crop_fraction: number
+  hard_negative_oversample: number
 }
 
 export class ApiError extends Error {

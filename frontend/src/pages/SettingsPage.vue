@@ -38,6 +38,17 @@
           />
           <q-input v-model.number="form.eval_confidence" type="number" step="0.05" outlined dense label="Confidence für Precision/Recall" class="col-6 col-sm-4" />
         </div>
+        <div class="text-subtitle2">Hard Negatives</div>
+        <div class="text-caption text-grey-7">
+          Für jedes Hard Negative eines Trainingsbildes wird ein Ausschnitt erzeugt: Box × Kontextfaktor je Seite, auf 16:9 erweitert,
+          mindestens der angegebene Anteil der Bildbreite (verhindert zu starkes Hochskalieren im Training). Der Ausschnitt wird
+          entsprechend oft ins Training aufgenommen (0 = keine Ausschnitte, nur Regressionstest).
+        </div>
+        <div class="row q-col-gutter-md">
+          <q-input v-model.number="form.hard_negative_context_factor" type="number" step="0.5" outlined dense label="Kontextfaktor" class="col-4" />
+          <q-input v-model.number="form.hard_negative_min_crop_fraction" type="number" step="0.05" outlined dense label="Mindestbreite (Anteil)" class="col-4" />
+          <q-input v-model.number="form.hard_negative_oversample" type="number" step="1" outlined dense label="Oversampling" class="col-4" />
+        </div>
         <div class="text-caption text-grey-7">
           Klassen und ihr COCO-Mapping werden unter <router-link to="/classes">Klassen</router-link> verwaltet.
         </div>

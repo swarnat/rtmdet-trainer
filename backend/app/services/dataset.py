@@ -33,13 +33,15 @@ def eligibility(session: Session, class_names: list[str]) -> dict:
         elif split is not None:
             usable[split.value] += 1
             usable_ids.append(image_id)
-    with_boxes = set(
-        session.execute(
-            select(Annotation.image_id).where(Annotation.class_name.in_(class_names)).distinct()
-        ).scalars()
-    )
+    rows = session.execute(
+        select(Annotation.image_id, Annotation.type).where(Annotation.class_name.in_(class_names))
+    ).all()
+    with_boxes = {i for i, kind in rows if kind == "positive"}
+    usable_set = set(usable_ids)
+    hard_negatives = sum(1 for i, kind in rows if kind == "hard_negative" and i in usable_set)
     negative = sum(1 for i in usable_ids if i not in with_boxes)
-    return {"class_names": class_names, "usable": usable, "needs_review": needs_review, "negative": negative}
+    return {"class_names": class_names, "usable": usable, "needs_review": needs_review, "negative": negative,
+            "hard_negatives": hard_negatives}
 
 
 def dataset_stats(session: Session) -> dict:
@@ -47,21 +49,22 @@ def dataset_stats(session: Session) -> dict:
     rows = _labeled_rows(session)
     active = active_class_names(session)
 
-    with_boxes = set(session.execute(select(Annotation.image_id).distinct()).scalars())
+    with_boxes = set(session.execute(select(Annotation.image_id).where(Annotation.type == "positive").distinct()).scalars())
     splits = {"train": 0, "validation": 0}
     for _id, split, _reviewed in rows:
         if split is not None:
             splits[split.value] += 1
 
-    class_rows = dict(
-        session.execute(
-            select(Annotation.class_name, func.count(Annotation.id))
-            .join(Image, Image.id == Annotation.image_id)
-            .where(Image.annotation_status == AnnotationStatus.labeled)
-            .group_by(Annotation.class_name)
-        ).all()
-    )
-    per_class = {c.name: class_rows.get(c.name, 0) for c in list_classes(session)}
+    class_rows = session.execute(
+        select(Annotation.class_name, Annotation.type, func.count(Annotation.id))
+        .join(Image, Image.id == Annotation.image_id)
+        .where(Image.annotation_status == AnnotationStatus.labeled)
+        .group_by(Annotation.class_name, Annotation.type)
+    ).all()
+    counts = {(name, kind): n for name, kind, n in class_rows}
+    classes = list_classes(session)
+    per_class = {c.name: counts.get((c.name, "positive"), 0) for c in classes}
+    hard_negatives = {c.name: counts.get((c.name, "hard_negative"), 0) for c in classes}
 
     return {
         "images_total": total,
@@ -71,4 +74,5 @@ def dataset_stats(session: Session) -> dict:
         "images_needs_review": sum(1 for _i, _s, reviewed in rows if not is_reviewed_for(reviewed, active)),
         "splits": splits,
         "annotations_per_class": per_class,
+        "hard_negatives_per_class": hard_negatives,
     }

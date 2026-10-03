@@ -19,6 +19,7 @@ class DetectionClassOut(BaseModel):
     sort_order: int
     active: bool
     annotation_count: int = 0
+    hard_negative_count: int = 0
     created_at: datetime
     updated_at: datetime
 

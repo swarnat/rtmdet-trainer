@@ -18,6 +18,7 @@
                 <th class="text-left">Anzeigename</th>
                 <th class="text-left" style="min-width: 260px">COCO-Quellklassen</th>
                 <th class="text-right">Boxen</th>
+                <th class="text-right">HN</th>
                 <th class="text-center">Aktiv</th>
                 <th></th>
               </tr>
@@ -59,12 +60,13 @@
                   />
                 </td>
                 <td class="text-right">{{ c.annotation_count }}</td>
+                <td class="text-right">{{ c.hard_negative_count }}</td>
                 <td class="text-center">
                   <q-toggle :model-value="c.active" dense @update:model-value="(v) => update(c.name, { active: v })" />
                 </td>
                 <td>
-                  <q-btn dense flat round size="sm" icon="delete" color="negative" :disable="c.annotation_count > 0" @click="remove(c.name)">
-                    <q-tooltip>{{ c.annotation_count > 0 ? 'Klasse hat Annotationen – stattdessen deaktivieren' : 'Klasse löschen' }}</q-tooltip>
+                  <q-btn dense flat round size="sm" icon="delete" color="negative" :disable="c.annotation_count + c.hard_negative_count > 0" @click="remove(c.name)">
+                    <q-tooltip>{{ c.annotation_count + c.hard_negative_count > 0 ? 'Klasse hat Annotationen – stattdessen deaktivieren' : 'Klasse löschen' }}</q-tooltip>
                   </q-btn>
                 </td>
               </tr>

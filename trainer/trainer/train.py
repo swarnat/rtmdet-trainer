@@ -11,14 +11,14 @@ import traceback
 import torch
 
 from odcore.classes import COCO_CLASSES, coco_index_mapping, list_classes
-from odcore.db import ModelVersion, TrainingRun, TrainingStatus, utcnow
+from odcore.db import ModelStatus, ModelVersion, TrainingRun, TrainingStatus, utcnow
 from odcore.openvino_detector import OpenVinoDetector
 from odcore.settings_store import get_setting
 
 from .config import get_settings
-from .dataset import create_snapshot, load_val_samples
+from .dataset import create_snapshot, load_hard_negatives, load_val_samples
 from .db import session_factory, storage
-from .evaluate import evaluate_detector
+from .evaluate import compare, evaluate_detector
 from .export_onnx import RTMDetDeployWrapper, build_detector, export_onnx
 from .export_openvino import export_openvino, verify_openvino
 from .progress import ProgressHookFactory, RunReporter
@@ -51,6 +51,35 @@ def _strip_checkpoint(src: str, dst: str, meta: dict) -> None:
     """Keep only the (EMA) weights; drop optimizer/scheduler state."""
     ckpt = torch.load(src, map_location="cpu")
     torch.save({"state_dict": ckpt["state_dict"], "meta": meta}, dst)
+
+
+def _compare_with_production(work_root: str, new_metrics: dict, coco_val: dict, samples: list[dict],
+                             hard_negatives: list[dict], image_dir: str, width: int, height: int,
+                             eval_conf: float, nms_iou: float) -> dict | None:
+    """Evaluate the current production model on the same data for a fair comparison.
+
+    A lower hard-negative FP rate only counts if recall does not suffer: the
+    comparison reports per-class deltas and warnings.
+    """
+    import openvino as ov
+
+    with session_factory()() as session:
+        prod = session.query(ModelVersion).filter(ModelVersion.status == ModelStatus.production).first()
+        if prod is None:
+            return None
+        version, xml_key, prod_classes = prod.version, prod.openvino_key, tuple(prod.class_names)
+    try:
+        s3 = storage()
+        target = os.path.join(work_root, "baseline")
+        s3.download_file(s3.settings.bucket_models, xml_key, os.path.join(target, "model.xml"))
+        s3.download_file(s3.settings.bucket_models, xml_key[: -len(".xml")] + ".bin", os.path.join(target, "model.bin"))
+        detector = OpenVinoDetector(ov.Core(), os.path.join(target, "model.xml"), width, height)
+        baseline = evaluate_detector(detector, coco_val, samples, prod_classes, eval_conf, nms_iou,
+                                     hard_negatives=hard_negatives, image_dir=image_dir)
+        return compare(new_metrics, baseline, version)
+    except Exception:  # the comparison is informative only
+        log.exception("comparison with production model %s failed", version)
+        return None
 
 
 def run_training(run_id: int) -> None:
@@ -172,7 +201,16 @@ def run_training(run_id: int) -> None:
 
         coco_val, samples = load_val_samples(snapshot.local_dir)
         ov_detector = OpenVinoDetector(ov.Core(), xml_path, params["width"], params["height"])
-        metrics = evaluate_detector(ov_detector, coco_val, samples, tuple(class_names), eval_conf, nms_iou)
+        hard_negatives = load_hard_negatives(snapshot.local_dir)
+        image_dir = os.path.join(snapshot.local_dir, "images")
+        metrics = evaluate_detector(ov_detector, coco_val, samples, tuple(class_names), eval_conf, nms_iou,
+                                    hard_negatives=hard_negatives, image_dir=image_dir)
+        comparison = _compare_with_production(work_root, metrics, coco_val, samples, hard_negatives, image_dir,
+                                              params["width"], params["height"], eval_conf, nms_iou)
+        if comparison:
+            metrics["comparison"] = comparison
+            for w in comparison["warnings"]:
+                log.warning("compared with %s: %s", comparison["baseline_model"], w)
         metrics["mmdet_val_history"] = val_history
         metrics["export_verification"] = verification
         metrics["head_init"] = head_report
@@ -181,6 +219,9 @@ def run_training(run_id: int) -> None:
             json.dump(metrics, f, indent=1)
         o = metrics["overall"]
         log.info("evaluation: precision=%s recall=%s mAP50=%s mAP50-95=%s", o["precision"], o["recall"], o["mAP50"], o["mAP50-95"])
+        if metrics.get("hard_negatives"):
+            hn = metrics["hard_negatives"]["overall"]
+            log.info("hard negatives: %s of %s still detected (FP rate %s)", hn["still_detected"], hn["total"], hn["fp_rate"])
 
         # 6) register candidate (never production automatically)
         reporter.progress(phase="publishing", percent=98)

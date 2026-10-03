@@ -42,11 +42,15 @@ def replace_annotations(session: Session, image: Image, items: list[AnnotationIn
             x1, y1, x2, y2 = normalize_box(item.x1, item.y1, item.x2, item.y2, image.width, image.height)
         except ValueError as exc:
             raise AnnotationValidationError(f"annotation #{index}: {exc}") from exc
+        hard = item.type == "hard_negative"
         new_boxes.append(
             Annotation(
                 class_name=item.class_name,
                 x1=round(x1, 1), y1=round(y1, 1), x2=round(x2, 1), y2=round(y2, 1),
+                type=item.type,
                 source=item.source,
+                source_confidence=item.source_confidence if hard else None,
+                source_model=item.source_model if hard else None,
             )
         )
     image.annotations.clear()

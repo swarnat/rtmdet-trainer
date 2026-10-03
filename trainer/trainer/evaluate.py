@@ -15,6 +15,8 @@ from __future__ import annotations
 import contextlib
 import io
 import logging
+import os
+from dataclasses import replace
 from typing import Callable
 
 import cv2
@@ -159,12 +161,76 @@ def precision_recall(coco_gt: dict, preds: dict[int, list], class_names: tuple[s
     }
 
 
-def evaluate_detector(detector, coco_gt: dict, samples: list[dict], class_names: tuple[str, ...],
-                      eval_conf: float, iou_nms: float) -> dict:
-    """Run an ``OpenVinoDetector`` on all samples and compute the metric set."""
-    preds = predict_all(lambda img: detector.detect(img, 0.001, iou_nms).detections, samples)
-    maps = coco_map(coco_gt, preds, class_names)
-    prs = precision_recall(coco_gt, preds, class_names, eval_conf)
+def remap_predictions(preds: dict[int, list], model_classes: tuple[str, ...], gt_classes: tuple[str, ...]) -> dict[int, list]:
+    """Translate model class indices to ground-truth class indices by name; drop unknown classes."""
+    index = {i: gt_classes.index(n) for i, n in enumerate(model_classes) if n in gt_classes}
+    return {
+        img_id: [replace(d, class_id=index[d.class_id]) for d in dets if d.class_id in index]
+        for img_id, dets in preds.items()
+    }
+
+
+def hard_negative_regression(detect: Callable[[np.ndarray], list], hard_negatives: list[dict], image_dir: str,
+                             model_classes: tuple[str, ...], conf: float, iou_thr: float = 0.5,
+                             cache: dict[int, list] | None = None) -> dict:
+    """Does the model still detect the stored false positives?
+
+    A hard negative counts as "still detected" if a detection of the same
+    class with confidence >= ``conf`` overlaps its box with IoU >= ``iou_thr``.
+    Hard negatives of classes the model does not have are skipped.
+    """
+    cache = dict(cache or {})
+    names = list(model_classes)
+    buckets: dict[str, dict] = {}
+
+    def bump(key: str, hit: bool) -> None:
+        b = buckets.setdefault(key, {"total": 0, "still_detected": 0})
+        b["total"] += 1
+        b["still_detected"] += int(hit)
+
+    for hn in hard_negatives:
+        if hn["class"] not in names:
+            continue
+        if hn["image_id"] not in cache:
+            image = cv2.imread(os.path.join(image_dir, hn["file_name"]), cv2.IMREAD_COLOR)
+            if image is None:
+                raise RuntimeError(f"cannot read {hn['file_name']}")
+            cache[hn["image_id"]] = detect(image)
+        cls = names.index(hn["class"])
+        boxes = np.array([[d.x1, d.y1, d.x2, d.y2] for d in cache[hn["image_id"]] if d.class_id == cls and d.confidence >= conf])
+        hit = bool(len(boxes)) and float(box_iou(np.array([hn["bbox"]]), boxes).max()) >= iou_thr
+        for key in ("overall", f"class:{hn['class']}", f"split:{hn['split']}"):
+            bump(key, hit)
+
+    def finish(b: dict | None) -> dict:
+        b = b or {"total": 0, "still_detected": 0}
+        return {**b, "fp_rate": b["still_detected"] / b["total"] if b["total"] else None}
+
+    return {
+        "confidence": conf,
+        "iou": iou_thr,
+        "overall": finish(buckets.get("overall")),
+        "validation_only": finish(buckets.get("split:validation")),
+        "train_only": finish(buckets.get("split:train")),
+        "per_class": {n: finish(buckets.get(f"class:{n}")) for n in names if f"class:{n}" in buckets},
+    }
+
+
+def evaluate_detector(detector, coco_gt: dict, samples: list[dict], model_classes: tuple[str, ...],
+                      eval_conf: float, iou_nms: float, hard_negatives: list[dict] | None = None,
+                      image_dir: str | None = None) -> dict:
+    """Run an ``OpenVinoDetector`` on all samples and compute the metric set.
+
+    Classes are matched by name, so models with a different class list (e.g.
+    the production model in the comparison) can be evaluated on the same data;
+    ground-truth classes the model lacks get ``None`` metrics.
+    """
+    detect = lambda img: detector.detect(img, 0.001, iou_nms).detections  # noqa: E731
+    raw = predict_all(detect, samples)
+    gt_classes = tuple(c["name"] for c in sorted(coco_gt["categories"], key=lambda c: c["id"]))
+    preds = remap_predictions(raw, model_classes, gt_classes)
+    maps = coco_map(coco_gt, preds, gt_classes)
+    prs = precision_recall(coco_gt, preds, gt_classes, eval_conf)
 
     def merge(m: dict, p: dict) -> dict:
         return {
@@ -174,12 +240,15 @@ def evaluate_detector(detector, coco_gt: dict, samples: list[dict], class_names:
         }
 
     per_class = {}
-    for name in class_names:
+    for name in gt_classes:
+        if name not in model_classes:
+            per_class[name] = None  # model cannot detect this class
+            continue
         m = maps["per_class"].get(name, {})
         per_class[name] = merge(m, prs["per_class"][name])
         if "small" in m:
             per_class[name]["small"] = m["small"]
-    return {
+    result = {
         "evaluated_with": "openvino",
         "input_size": f"{detector.input_width}x{detector.input_height}",
         "num_images": len(samples),
@@ -188,4 +257,39 @@ def evaluate_detector(detector, coco_gt: dict, samples: list[dict], class_names:
         "overall": merge(maps["overall"], prs["overall"]),
         "per_class": per_class,
         "per_size": {s: merge(maps["per_size"].get(s, {}), prs["per_size"][s]) for s in AREA_RANGES},
+    }
+    if hard_negatives and image_dir:
+        result["hard_negatives"] = hard_negative_regression(
+            detect, hard_negatives, image_dir, model_classes, eval_conf, cache=raw
+        )
+    return result
+
+
+def compare(new: dict, baseline: dict, baseline_version: str, recall_tolerance: float = 0.02) -> dict:
+    """Per-class deltas new - baseline, plus warnings when fewer false alarms come with lower recall."""
+    def delta(a, b):
+        return None if a is None or b is None else a - b
+
+    per_class = {}
+    warnings = []
+    for name, m in new["per_class"].items():
+        b = baseline["per_class"].get(name)
+        if m is None or b is None:
+            continue
+        entry = {k: delta(m.get(k), b.get(k)) for k in ("precision", "recall", "mAP50", "mAP50-95")}
+        hn_new = (new.get("hard_negatives") or {}).get("per_class", {}).get(name)
+        hn_old = (baseline.get("hard_negatives") or {}).get("per_class", {}).get(name)
+        entry["hard_negative_fp_rate"] = delta(hn_new and hn_new["fp_rate"], hn_old and hn_old["fp_rate"])
+        per_class[name] = entry
+        if entry["recall"] is not None and entry["recall"] < -recall_tolerance:
+            if entry["hard_negative_fp_rate"] is not None and entry["hard_negative_fp_rate"] < 0:
+                warnings.append(f"{name}: fewer known false positives, but recall dropped by {-entry['recall']:.1%}")
+            else:
+                warnings.append(f"{name}: recall dropped by {-entry['recall']:.1%}")
+    return {
+        "baseline_model": baseline_version,
+        "baseline": {"overall": baseline["overall"], "per_class": baseline["per_class"],
+                     "hard_negatives": baseline.get("hard_negatives")},
+        "delta_per_class": per_class,
+        "warnings": warnings,
     }

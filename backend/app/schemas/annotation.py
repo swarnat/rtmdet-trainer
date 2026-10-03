@@ -15,7 +15,11 @@ class AnnotationIn(BaseModel):
     y1: float
     x2: float
     y2: float
+    # hard_negative = region a model wrongly detected as `class` (false positive)
+    type: Literal["positive", "hard_negative"] = "positive"
     source: Literal["manual", "prediction"] = "manual"
+    source_confidence: Optional[float] = Field(None, ge=0, le=1, description="hard negatives: confidence of the false detection")
+    source_model: Optional[str] = Field(None, max_length=32, description="hard negatives: model version that produced it")
 
 
 class AnnotationOut(BaseModel):
@@ -27,7 +31,10 @@ class AnnotationOut(BaseModel):
     y1: float
     x2: float
     y2: float
+    type: str
     source: str
+    source_confidence: Optional[float] = None
+    source_model: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -54,7 +61,8 @@ class ImageOut(BaseModel):
     height: int
     annotation_status: str
     dataset_split: Optional[str]
-    annotation_count: int = 0
+    annotation_count: int = Field(0, description="positive boxes")
+    hard_negative_count: int = 0
     reviewed_classes: Optional[list[str]] = None
     # labeled, but not checked for all currently active classes
     needs_review: bool = False

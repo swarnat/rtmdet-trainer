@@ -62,3 +62,4 @@ class TrainingEligibility(BaseModel):
     usable: SplitCount = Field(description="labeled images checked for all selected classes")
     needs_review: int = Field(description="labeled images not (yet) checked for all selected classes, excluded")
     negative: int = Field(description="usable images without boxes of the selected classes")
+    hard_negatives: int = Field(0, description="hard negatives of the selected classes on usable images")

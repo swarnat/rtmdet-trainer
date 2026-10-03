@@ -17,8 +17,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "nms_iou_threshold": 0.6,
     # Fraction of newly labeled images assigned to the validation split (persisted per image)
     "validation_ratio": 0.15,
-    # Confidence used for precision/recall in the training evaluation
+    # Confidence used for precision/recall and the hard-negative regression in the training evaluation
     "eval_confidence": 0.25,
+    # Hard negatives: crop = box x factor (each side), widened to 16:9, at least this fraction of the image width
+    "hard_negative_context_factor": 3.0,
+    "hard_negative_min_crop_fraction": 0.25,
+    # how often each hard-negative crop appears in the training split
+    "hard_negative_oversample": 3,
 }
 
 

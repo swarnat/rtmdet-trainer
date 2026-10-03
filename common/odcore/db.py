@@ -102,8 +102,14 @@ class Annotation(Base):
     y1: Mapped[float] = mapped_column(Float, nullable=False)
     x2: Mapped[float] = mapped_column(Float, nullable=False)
     y2: Mapped[float] = mapped_column(Float, nullable=False)
+    # "positive": real object; "hard_negative": region a model wrongly detected as ``class_name``
+    # (never trained as an extra class; used for background crops and regression tests)
+    type: Mapped[str] = mapped_column(String(16), nullable=False, default="positive", server_default="positive", index=True)
     # "manual" or "prediction" (accepted model prediction, then edited like any other box)
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
+    # for hard negatives: confidence and model version of the false detection
+    source_confidence: Mapped[Optional[float]] = mapped_column(Float)
+    source_model: Mapped[Optional[str]] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow, server_default=func.now()

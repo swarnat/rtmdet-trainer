@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { api, type ClassName, type DetectResponse, type ImageDetail } from '@/services/api'
+import { api, type AnnotationType, type ClassName, type DetectResponse, type ImageDetail } from '@/services/api'
 import { useClassesStore } from './classes'
 
 /** A box being edited in the UI (original image pixel coordinates). */
@@ -11,7 +11,10 @@ export interface EditBox {
   y1: number
   x2: number
   y2: number
+  type: AnnotationType
   source: 'manual' | 'prediction'
+  source_confidence?: number | null
+  source_model?: string | null
 }
 
 export interface Prediction extends EditBox {
@@ -51,7 +54,10 @@ export const useAnnotationStore = defineStore('annotation', () => {
       y1: a.y1,
       x2: a.x2,
       y2: a.y2,
+      type: a.type,
       source: a.source,
+      source_confidence: a.source_confidence,
+      source_model: a.source_model,
     }))
     predictions.value = []
     lastDetection.value = null
@@ -123,7 +129,9 @@ export const useAnnotationStore = defineStore('annotation', () => {
       y1: d.bbox.y1,
       x2: d.bbox.x2,
       y2: d.bbox.y2,
+      type: 'positive',
       source: 'prediction',
+      source_model: res.model.version,
     }))
     if (selectedId.value?.startsWith('p-')) selectedId.value = null
   }
@@ -137,7 +145,19 @@ export const useAnnotationStore = defineStore('annotation', () => {
   function acceptPrediction(id: string) {
     const p = predictions.value.find((x) => x.uid === id)
     if (!p || !acceptable(p)) return
-    const b = addBox({ class: p.class, x1: p.x1, y1: p.y1, x2: p.x2, y2: p.y2, source: 'prediction' })
+    const b = addBox({ class: p.class, x1: p.x1, y1: p.y1, x2: p.x2, y2: p.y2, type: 'positive', source: 'prediction' })
+    predictions.value = predictions.value.filter((x) => x.uid !== id)
+    selectedId.value = b.uid
+  }
+
+  /** False positive of the model: store the region as hard negative of the predicted class. */
+  function markHardNegative(id: string) {
+    const p = predictions.value.find((x) => x.uid === id)
+    if (!p || !acceptable(p)) return
+    const b = addBox({
+      class: p.class, x1: p.x1, y1: p.y1, x2: p.x2, y2: p.y2,
+      type: 'hard_negative', source: 'prediction', source_confidence: p.confidence, source_model: p.source_model ?? null,
+    })
     predictions.value = predictions.value.filter((x) => x.uid !== id)
     selectedId.value = b.uid
   }
@@ -147,7 +167,7 @@ export const useAnnotationStore = defineStore('annotation', () => {
     if (!accepted.length) return
     snapshot()
     for (const p of accepted) {
-      boxes.value.push(clamp({ uid: uid('a'), class: p.class, x1: p.x1, y1: p.y1, x2: p.x2, y2: p.y2, source: 'prediction' }))
+      boxes.value.push(clamp({ uid: uid('a'), class: p.class, x1: p.x1, y1: p.y1, x2: p.x2, y2: p.y2, type: 'positive', source: 'prediction' }))
     }
     predictions.value = predictions.value.filter((p) => !acceptable(p))
     selectedId.value = null
@@ -171,7 +191,10 @@ export const useAnnotationStore = defineStore('annotation', () => {
           y1: Math.round(b.y1 * 10) / 10,
           x2: Math.round(b.x2 * 10) / 10,
           y2: Math.round(b.y2 * 10) / 10,
+          type: b.type,
           source: b.source,
+          source_confidence: b.source_confidence ?? null,
+          source_model: b.source_model ?? null,
         })),
         markLabeled,
       )
@@ -189,6 +212,6 @@ export const useAnnotationStore = defineStore('annotation', () => {
     image, boxes, predictions, lastDetection, selectedId, activeClass, dirty, saving, history,
     selectedBox, selectedPrediction,
     load, addBox, updateBox, deleteSelected, setClassForSelected, undo,
-    setDetection, acceptable, acceptPrediction, acceptAllPredictions, clearPredictions, save,
+    setDetection, acceptable, acceptPrediction, markHardNegative, acceptAllPredictions, clearPredictions, save,
   }
 })

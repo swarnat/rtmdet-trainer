@@ -14,6 +14,11 @@ re-rolled. Labeled images without boxes are included as negatives.
 Only images that were checked for *every* class of the run are used
 (``Image.reviewed_classes``); boxes of other classes are dropped, i.e. such
 objects are background for this model.
+
+Hard negatives (see ``hard_negatives.py``) of training images add background
+crops ``images/hn_<annotation-id>.jpg`` to ``train.json`` (oversampled by
+repeating the image entry). All hard negatives of the snapshot are listed in
+``annotations/hard_negatives.json`` for the regression check.
 """
 from __future__ import annotations
 
@@ -34,6 +39,8 @@ from odcore.geometry import xyxy_to_xywh
 from odcore.settings_store import get_setting
 from odcore.splits import assign_split
 from odcore.storage import ObjectStorage
+
+from .hard_negatives import compute_crop, transform_boxes, write_crop
 
 log = logging.getLogger(__name__)
 
@@ -60,7 +67,7 @@ def image_file_name(image: Image) -> str:
 def build_coco(images: list[Image], class_names: list[str]) -> dict:
     """Build a COCO detection dict. Category ids are 1-based in the order of ``class_names``.
 
-    Boxes of classes not in ``class_names`` are dropped.
+    Boxes of classes not in ``class_names`` and hard negatives are dropped.
     """
     class_to_id = {name: i for i, name in enumerate(class_names)}
     coco_images, coco_anns = [], []
@@ -68,7 +75,7 @@ def build_coco(images: list[Image], class_names: list[str]) -> dict:
     for img in images:
         coco_images.append({"id": img.id, "file_name": image_file_name(img), "width": img.width, "height": img.height})
         for a in img.annotations:
-            if a.class_name not in class_to_id:
+            if a.class_name not in class_to_id or a.type == "hard_negative":
                 continue
             x, y, w, h = xyxy_to_xywh((a.x1, a.y1, a.x2, a.y2))
             if w < 1 or h < 1:
@@ -137,15 +144,6 @@ def create_snapshot(session: Session, s3: ObjectStorage, run_id: int, local_root
     os.makedirs(os.path.join(local_dir, "annotations"), exist_ok=True)
     os.makedirs(os.path.join(local_dir, "images"), exist_ok=True)
 
-    stats: dict = {"classes": list(class_names), "excluded_needs_review": excluded}
-    for split, file_name in SPLIT_FILES.items():
-        coco = build_coco(by_split[split], class_names)
-        stats[split.value] = split_stats(coco)
-        path = os.path.join(local_dir, "annotations", file_name)
-        with open(path, "w") as f:
-            json.dump(coco, f)
-        s3.upload_file(bucket_ds, f"{prefix}annotations/{file_name}", path, "application/json")
-
     def copy_one(img: Image) -> None:
         name = image_file_name(img)
         s3.copy(bucket_img, img.s3_object_key, bucket_ds, f"{prefix}images/{name}")
@@ -153,6 +151,28 @@ def create_snapshot(session: Session, s3: ObjectStorage, run_id: int, local_root
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         list(pool.map(copy_one, images))
+
+    stats: dict = {"classes": list(class_names), "excluded_needs_review": excluded}
+    cocos = {split: build_coco(by_split[split], class_names) for split in SPLIT_FILES}
+    for split in SPLIT_FILES:
+        stats[split.value] = split_stats(cocos[split])
+
+    hn_records, crop_stats = add_hard_negative_crops(session, cocos[DatasetSplit.train], images, class_names, local_dir)
+    stats["hard_negatives"] = crop_stats
+    for record in hn_records:
+        if record.get("crop_file"):
+            s3.upload_file(bucket_ds, f"{prefix}images/{record['crop_file']}",
+                           os.path.join(local_dir, "images", record["crop_file"]), "image/jpeg")
+
+    for split, file_name in SPLIT_FILES.items():
+        path = os.path.join(local_dir, "annotations", file_name)
+        with open(path, "w") as f:
+            json.dump(cocos[split], f)
+        s3.upload_file(bucket_ds, f"{prefix}annotations/{file_name}", path, "application/json")
+    path = os.path.join(local_dir, "annotations", "hard_negatives.json")
+    with open(path, "w") as f:
+        json.dump(hn_records, f)
+    s3.upload_file(bucket_ds, f"{prefix}annotations/hard_negatives.json", path, "application/json")
 
     manifest = {
         "training_run_id": run_id,
@@ -171,7 +191,8 @@ def create_snapshot(session: Session, s3: ObjectStorage, run_id: int, local_root
                 "source_key": i.s3_object_key,
                 "width": i.width,
                 "height": i.height,
-                "boxes": sum(1 for a in i.annotations if a.class_name in class_names),
+                "boxes": sum(1 for a in i.annotations if a.class_name in class_names and a.type != "hard_negative"),
+                "hard_negatives": sum(1 for a in i.annotations if a.class_name in class_names and a.type == "hard_negative"),
             }
             for i in images
         ],
@@ -182,6 +203,82 @@ def create_snapshot(session: Session, s3: ObjectStorage, run_id: int, local_root
     s3.upload_file(bucket_ds, f"{prefix}manifest.json", path, "application/json")
     log.info("dataset snapshot s3://%s/%s: %s", bucket_ds, prefix, json.dumps(stats))
     return Snapshot(prefix=f"{bucket_ds}/{prefix}", local_dir=local_dir, stats=stats, manifest=manifest)
+
+
+def add_hard_negative_crops(session: Session, train_coco: dict, images: list[Image], class_names: list[str],
+                            local_dir: str) -> tuple[list[dict], dict]:
+    """Append hard-negative crops of training images to ``train_coco`` (in place).
+
+    Returns one record per hard negative of the run's classes (train and
+    validation images; used for the regression check) and statistics.
+    """
+    factor = float(get_setting(session, "hard_negative_context_factor"))
+    min_fraction = float(get_setting(session, "hard_negative_min_crop_fraction"))
+    oversample = int(get_setting(session, "hard_negative_oversample"))
+    class_to_id = {name: i for i, name in enumerate(class_names)}
+    next_image_id = max((im["id"] for im in train_coco["images"]), default=0) + 1
+    next_ann_id = max((a["id"] for a in train_coco["annotations"]), default=0) + 1
+    records: list[dict] = []
+    crops = 0
+    per_class = {name: 0 for name in class_names}
+
+    for img in images:
+        positives = [(a.class_name, a.x1, a.y1, a.x2, a.y2) for a in img.annotations
+                     if a.type != "hard_negative" and a.class_name in class_to_id]
+        for hn in img.annotations:
+            if hn.type != "hard_negative" or hn.class_name not in class_to_id:
+                continue
+            per_class[hn.class_name] += 1
+            record = {
+                "annotation_id": hn.id,
+                "image_id": img.id,
+                "file_name": image_file_name(img),
+                "split": img.dataset_split.value,
+                "class": hn.class_name,
+                "bbox": [hn.x1, hn.y1, hn.x2, hn.y2],
+                "source_model": hn.source_model,
+                "source_confidence": hn.source_confidence,
+            }
+            records.append(record)
+            if img.dataset_split != DatasetSplit.train or oversample <= 0:
+                continue
+            crop = compute_crop(img.width, img.height, (hn.x1, hn.y1, hn.x2, hn.y2), factor, min_fraction)
+            boxes = transform_boxes(positives, crop)
+            crop_file = f"hn_{hn.id}.jpg"
+            write_crop(os.path.join(local_dir, "images", image_file_name(img)), crop, os.path.join(local_dir, "images", crop_file))
+            record.update(crop_file=crop_file, crop=[crop.x1, crop.y1, crop.x2, crop.y2], positives_in_crop=len(boxes))
+            crops += 1
+            for _ in range(oversample):  # oversampling = repeated image entries
+                train_coco["images"].append({"id": next_image_id, "file_name": crop_file, "width": crop.width,
+                                             "height": crop.height, "hard_negative_of": hn.id})
+                for cls, x1, y1, x2, y2 in boxes:
+                    w, h = x2 - x1, y2 - y1
+                    train_coco["annotations"].append({
+                        "id": next_ann_id, "image_id": next_image_id, "category_id": class_to_id[cls] + 1,
+                        "bbox": [round(x1, 2), round(y1, 2), round(w, 2), round(h, 2)], "area": round(w * h, 2), "iscrowd": 0,
+                    })
+                    next_ann_id += 1
+                next_image_id += 1
+
+    stats = {
+        "total": len(records),
+        "per_class": per_class,
+        "train_crops": crops,
+        "oversample": oversample,
+        "context_factor": factor,
+        "min_crop_fraction": min_fraction,
+    }
+    if records:
+        log.info("hard negatives: %s", json.dumps(stats))
+    return records, stats
+
+
+def load_hard_negatives(local_dir: str) -> list[dict]:
+    path = os.path.join(local_dir, "annotations", "hard_negatives.json")
+    if not os.path.exists(path):
+        return []
+    with open(path) as f:
+        return json.load(f)
 
 
 def load_val_samples(local_dir: str) -> tuple[dict, list[dict]]:

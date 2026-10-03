@@ -42,6 +42,9 @@
               <q-badge v-if="img.annotation_status === 'unlabeled'" color="grey-6" label="offen" />
               <q-badge v-else-if="img.annotation_count === 0" color="purple-6" label="negativ" />
               <q-badge v-else color="green-7" :label="`${img.annotation_count} Boxen`" />
+              <q-badge v-if="img.hard_negative_count" color="grey-9" class="q-ml-xs" :label="`${img.hard_negative_count} HN`">
+                <q-tooltip>Hard Negatives (bekannte Fehlalarme)</q-tooltip>
+              </q-badge>
               <q-badge v-if="img.needs_review" color="amber-9" class="q-ml-xs" label="prüfen">
                 <q-tooltip>Noch nicht auf alle aktiven Klassen geprüft</q-tooltip>
               </q-badge>

@@ -39,6 +39,9 @@
               <div class="row text-body2">
                 <span class="class-dot" :style="{ background: c.color, marginTop: '5px' }" />{{ c.label }}
                 <q-space />{{ stats?.annotations_per_class[c.name] ?? 0 }}
+                <span v-if="stats?.hard_negatives_per_class?.[c.name]" class="text-grey-7 q-ml-sm">
+                  + {{ stats.hard_negatives_per_class[c.name] }} HN
+                </span>
               </div>
               <q-linear-progress :value="classShare(c.name)" :style="{ color: c.color }" track-color="grey-3" rounded size="8px" />
             </div>
