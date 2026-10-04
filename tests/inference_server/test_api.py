@@ -9,9 +9,8 @@ from conftest import ACCESS_KEY, build_constant_model, image_file, upload
 
 
 def test_without_model_detect_is_unavailable(client):
-    assert client.get("/api/v1/health").json() == {
-        "status": "ok", "model_loaded": False, "model_version": None, "uploads_enabled": True,
-    }
+    health = client.get("/api/v1/health").json()
+    assert (health["model_loaded"], health["model_version"], health["uploads_enabled"]) == (False, None, True)
     assert client.post("/api/v1/detect", files=image_file()).status_code == 503
     assert client.get("/api/v1/model").status_code == 404
 

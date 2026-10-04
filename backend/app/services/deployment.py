@@ -109,15 +109,19 @@ def status(session: Session) -> dict[str, Any]:
     target = get_target(session)
     session.close()
     if target is None:
-        return {"configured": False, "url": None, "reachable": False, "model": None, "error": None}
-    result: dict[str, Any] = {"configured": True, "url": target.url, "reachable": False, "model": None, "error": None}
+        return {"configured": False, "url": None, "reachable": False, "model": None, "error": None, "warnings": []}
+    result: dict[str, Any] = {"configured": True, "url": target.url, "reachable": False, "model": None, "error": None,
+                              "warnings": []}
     try:
         with http_client(STATUS_TIMEOUT) as client:
             res = client.get(f"{target.url}/api/v1/model")
+            health = client.get(f"{target.url}/api/v1/health")
     except httpx.HTTPError as exc:
         result["error"] = f"not reachable: {exc.__class__.__name__}"
         return result
     result["reachable"] = True
+    if health.status_code == 200:  # e.g. missing CPU instruction sets on the production host
+        result["warnings"] = list(health.json().get("warnings") or [])
     if res.status_code == 200:
         result["model"] = res.json()
     elif res.status_code != 404:  # 404 = reachable, but no model installed yet

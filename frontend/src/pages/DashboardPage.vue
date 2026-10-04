@@ -116,7 +116,13 @@ const detecting = ref(false)
 const opts = reactive({ model: 'production', input_size: '1536x864', confidence: 0.25 })
 
 const cards = computed(() => [
-  { label: 'Trainingsbilder', value: stats.value?.images_total ?? '–', hint: 'in Garage S3' },
+  {
+    label: 'Trainingsbilder',
+    value: stats.value?.images_total ?? '–',
+    hint: stats.value?.images_retained_for_snapshots
+      ? `in Garage S3 · + ${stats.value.images_retained_for_snapshots} gelöschte, noch von Modellen verwendet`
+      : 'in Garage S3',
+  },
   { label: 'Annotiert', help: 'negative' as const, value: stats.value?.images_labeled ?? '–', hint: `davon ${stats.value?.images_negative ?? 0} negativ (ohne Objekte)` },
   {
     label: 'Offen',

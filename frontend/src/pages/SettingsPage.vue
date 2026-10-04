@@ -118,6 +118,10 @@
           </q-btn>
           <span v-if="connection" class="text-body2" :class="connection.ok ? 'text-positive' : 'text-negative'">{{ connection.text }}</span>
         </div>
+        <q-banner v-for="w in connection?.warnings ?? []" :key="w" dense rounded class="bg-amber-soft text-body2">
+          <template #avatar><q-icon name="warning" color="warning" /></template>
+          Das Produktivsystem meldet: {{ w }}
+        </q-banner>
         <div class="text-caption text-muted">
           Klassen und ihr COCO-Mapping werden unter <router-link to="/classes">Klassen</router-link> verwaltet.
         </div>
@@ -148,7 +152,7 @@ const MASK = '********'
 const keyStored = ref(false)
 const showKey = ref(false)
 const testing = ref(false)
-const connection = ref<{ ok: boolean; text: string } | null>(null)
+const connection = ref<{ ok: boolean; text: string; warnings?: string[] } | null>(null)
 
 async function testConnection() {
   testing.value = true
@@ -158,6 +162,7 @@ async function testConnection() {
     else if (!st.reachable) connection.value = { ok: false, text: `Nicht erreichbar (${st.error})` }
     else if (st.error) connection.value = { ok: false, text: st.error }
     else connection.value = { ok: true, text: st.model ? `Verbunden – aktives Modell: ${st.model.version}` : 'Verbunden – noch kein Modell installiert' }
+    if (connection.value && st.warnings?.length) connection.value.warnings = st.warnings
   } catch (e) {
     connection.value = { ok: false, text: errorMessage(e) }
   } finally {

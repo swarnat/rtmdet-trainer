@@ -33,7 +33,8 @@ SCOPES = ("unlabeled", "unlabeled_and_review")
 def select_image_ids(session: Session, scope: str) -> list[int]:
     ids = list(
         session.execute(
-            select(Image.id).where(Image.annotation_status == AnnotationStatus.unlabeled).order_by(Image.id)
+            select(Image.id).where(Image.annotation_status == AnnotationStatus.unlabeled, Image.deleted_at.is_(None))
+            .order_by(Image.id)
         ).scalars()
     )
     if scope == "unlabeled_and_review":
@@ -81,7 +82,7 @@ def run_batch(batch_id: int, session_factory: sessionmaker[Session], storage: Ob
                 log.info("batch test #%d cancelled after %d images", batch_id, processed)
                 return
             image = session.get(Image, image_id)
-            if image is not None:
+            if image is not None and image.deleted_at is None:
                 try:
                     data = storage.get_bytes(storage.settings.bucket_images, image.s3_object_key)
                     result = detector.detect(decode_image(data), conf, iou)

@@ -227,10 +227,21 @@ Bei jedem Training erzeugt der Trainer aus PostgreSQL und S3 einen Snapshot unte
 manifest.json            Bild-IDs, SHA-256, Split, Quell-Keys, Statistik
 annotations/train.json   COCO Detection Format (Kategorien 1..N in der Klassenreihenfolge des Laufs)
 annotations/val.json
-images/<sha256>.<ext>    Kopien der Bilder (bleiben erhalten, auch wenn Bilder später gelöscht werden)
+images/hn_<id>.jpg       Hard-Negative-Ausschnitte (siehe oben)
+annotations/hard_negatives.json   alle Hard Negatives des Snapshots
 ```
 
-* Zusätzlich: `annotations/hard_negatives.json` (alle Hard Negatives des Snapshots) und `images/hn_<id>.jpg` (Hard-Negative-Ausschnitte, siehe oben).
+* **Keine Bildkopien:** Ein Snapshot *verlinkt* seine Bilder (Tabelle `snapshot_images`), statt sie zu kopieren; der Trainer
+  lädt sie direkt aus der Bildbibliothek. Bilder sind über ihren SHA-256 adressiert und unveränderlich. Jedes Bild hat einen
+  **Link-Zähler** `images.snapshot_refs` (wie `nlink` im Dateisystem; in der Oberfläche als 🔗-Badge „in N Trainings“), der in
+  derselben Transaktion wie die Links geändert wird:
+  * **+1** beim Start eines Trainings (Snapshot wird erstellt; die Bilder werden dabei kurz gesperrt),
+  * **−1** wenn der Snapshot nicht mehr gebraucht wird: Training fehlgeschlagen/abgebrochen oder Modell gelöscht. Dabei wird
+    auch `s3://datasets/<run>/` entfernt.
+* **Bild löschen:** bei Zähler 0 endgültig; sonst wird es nur ausgeblendet (`deleted_at`, Annotationen werden entfernt – der
+  Snapshot hat seine eigenen) und die Datei bleibt, bis der letzte Link wegfällt; dann wird sie automatisch gelöscht. Ein
+  erneuter Upload desselben Bildes holt es als neues, unbearbeitetes Bild zurück.
+* Der Trainer räumt beim Start und vor jedem Training nicht mehr benötigte Snapshots auf (z. B. nach einem Absturz).
 * Es werden alle Bilder mit Status `labeled` verwendet, die für alle Klassen des Laufs geprüft sind, **inklusive negativer Bilder ohne Boxen** (in der Trainings-Pipeline auch über `filter_empty_gt=False`, `allow_negative_crop=True` usw.).
 * Der Split (`train`/`validation`, Default 85/15) wird beim ersten Labeln deterministisch aus dem Bild-Hash bestimmt und am Bild **persistiert**. Er wird nie neu gewürfelt, auch nicht bei geändertem Validierungsanteil. Manuelles Umsetzen ist per `PATCH /api/v1/images/{id}` möglich.
 * Der Snapshot entsteht beim **Start** des Laufs (nicht beim Einreihen).
@@ -257,7 +268,8 @@ Ausgewertet wird das **exportierte OpenVINO-Modell** auf dem Validierungssplit, 
 
 | Tabelle | Wichtigste Felder |
 |---------|-------------------|
-| `images` | `s3_object_key`, `sha256` (unique), `width`, `height`, `annotation_status` (`unlabeled`/`labeled`), `dataset_split`, `reviewed_classes`, `created_at`, `updated_at` |
+| `images` | `s3_object_key`, `sha256` (unique), `width`, `height`, `annotation_status` (`unlabeled`/`labeled`), `dataset_split`, `reviewed_classes`, `snapshot_refs` (Link-Zähler), `deleted_at` (ausgeblendet, Datei noch verlinkt), `created_at`, `updated_at` |
+| `snapshot_images` | `training_run_id`, `image_id` – welche Bilder ein Trainings-Snapshot verwendet |
 | `annotations` | `image_id`, `class_name`, `x1`, `y1`, `x2`, `y2` (Originalpixel), `type` (`positive`/`hard_negative`), `source` (`manual`/`prediction`), `source_confidence`, `source_model` |
 | `detection_classes` | `name` (unique, fest), `label`, `color`, `coco_classes`, `sort_order`, `active` |
 | `training_runs` | `status`, `base_model_id`, `class_names`, `dataset_snapshot`, `input_width/height`, `epochs`, `batch_size`, `learning_rate`, `started_at`, `finished_at`, `progress_json`, `metrics_json`, `log`, `error` |
@@ -276,11 +288,44 @@ common/odcore/        gemeinsamer Code: Klassen, Geometrie/Letterboxing, ORM, S3
 backend/              FastAPI (app/api/routes, core, db, schemas, services), Alembic, requirements.lock
 trainer/              RQ-Worker, Snapshot, Training, Evaluation, ONNX/OpenVINO-Export, rtmdet/ Config
 frontend/             Vue 3 + Vite + Quasar + vue-konva
+backup/               Backup-Dienst: Worker + CLI (pg_dump/pg_restore, S3-Streaming), siehe „Backup & Wiederherstellung“
 inference-server/     eigenständiger Produktiv-Stack: Erkennungs-API, Modell per API austauschbar (siehe inference-server/README.md)
 infrastructure/garage garage.toml, idempotentes init.sh (Admin-API)
 scripts/              generate-env.sh, wait-for-services.sh, bootstrap-model.py
 tests/                backend/ (Geometrie, Annotation, Detection-API, Modelle), trainer/, integration/
 ```
+
+## Backup & Wiederherstellung
+
+Ein Backup ist **eine `.tar`-Datei** im Ordner `BACKUP_PATH` (Standard `./backups`, in `docker-compose.yml` eingebunden) mit
+dem kompletten Stand: Datenbank (`pg_dump`: Bilder-Metadaten, Annotationen, Hard Negatives, Klassen, Einstellungen inkl.
+Produktivsystem-Zugang, Trainingsläufe, Modellverwaltung) sowie alle Objekte der Buckets für Bilder, Dataset-Snapshots und
+Modelle. Nicht enthalten ist die `.env` (Zugangsdaten der Dienste) – die separat sichern.
+
+Alle Befehle laufen im laufenden Dienst `backup` (`docker compose exec backup odbackup …`); die make-Ziele sind Kurzformen.
+
+* **Erstellen:** in der Weboberfläche unter *Backups* („Backup erstellen“), `docker compose exec backup odbackup create`
+  oder `make backup`. Läuft im Dienst `backup`
+  im Hintergrund, ohne Zeitlimit; Fortschritt, Liste, Download und Löschen in der Weboberfläche bzw. `make backup-list`.
+  Es läuft immer nur ein Backup oder eine Wiederherstellung gleichzeitig. Die Daten werden gestreamt; benötigt wird
+  freier Platz in etwa der Größe von Bildern + Snapshots + Modellen.
+* **Prüfen:** `docker compose exec backup odbackup verify backup-20261004-175427` (oder `make backup-verify FILE=…`) liest die Datei vollständig (Prüfsumme der Datenbank,
+  Anzahl der Dateien).
+* **Wiederherstellen** – ersetzt **alles** durch den Stand des Backups:
+  ```bash
+  docker compose stop api trainer frontend
+  docker compose exec backup odbackup restore backup-20261004-175427
+  docker compose up -d
+  ```
+  (Kurzform: `make restore FILE=backup-20261004-175427`.) Der Restore-Befehl fragt nach, prüft die Datei vollständig (bis dahin wird nichts
+  verändert), spielt die Datenbank in eine neue Datenbank ein und tauscht sie erst dann aus (die bisherige bleibt als
+  `<db>_before_restore` bis zur nächsten Wiederherstellung erhalten), ersetzt den Inhalt der Buckets, leert den
+  Modell-Cache der API. Bricht die Wiederherstellung beim Übertragen der Dateien ab, den Befehl
+  einfach erneut ausführen. Ältere Backups werden beim Start der API automatisch auf das aktuelle Datenbankschema migriert;
+  Backups einer neueren Version werden abgelehnt (`RESTORE_ARGS=--force` erzwingt es).
+* **Umzug auf einen anderen Server:** `.tar` in dessen `BACKUP_PATH` kopieren (erscheint dann in der Liste), Stack mit
+  eigener `.env` starten, `make restore FILE=…`.
+* Übersicht: `docker compose exec backup odbackup create | list | verify NAME | restore NAME [--yes] [--force]`.
 
 ## Produktivsystem (Inference-Server)
 
@@ -308,6 +353,9 @@ docker compose run --rm --no-deps trainer python -m pytest -q /srv/tests/trainer
 
 # Inference-Server (Produktivsystem)
 make inference-server-test
+
+# Backup/Restore-Logik
+make backup-test
 
 # Integration gegen den laufenden Stack
 docker compose run --rm --no-deps -e OD_BASE_URL=http://frontend api python -m pytest -q /srv/tests/integration

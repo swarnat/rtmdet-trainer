@@ -86,9 +86,12 @@ services:
       OPENVINO_DEVICE: CPU
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
+      BACKUP_DIR: /backups
     volumes:
       # cache of downloaded/compiled OpenVINO models (source of truth stays in S3)
       - model-cache:/var/cache/od-models
+      # backup list, download and delete (written by the backup service)
+      - ${BACKUP_PATH:-./backups}:/backups
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
@@ -128,6 +131,32 @@ services:
       timeout: 10s
       start_period: 60s
       retries: 5
+
+  backup:
+    # full backups (database + all buckets) as tar files in BACKUP_PATH; worker for the UI and CLI:
+    #   docker compose exec backup odbackup create | list | verify NAME | restore NAME   (see README / Makefile)
+    build:
+      context: .
+      dockerfile: backup/Dockerfile
+    image: object-detection/backup:latest
+    restart: unless-stopped
+    environment:
+      <<: [*db-env, *s3-env]
+      REDIS_URL: redis://redis:6379/0
+      BACKUP_DIR: /backups
+      MODEL_CACHE_DIR: /var/cache/od-models
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ${BACKUP_PATH:-./backups}:/backups
+      # cleared on restore (cached files are keyed by model version)
+      - model-cache:/var/cache/od-models
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      garage-init:
+        condition: service_completed_successfully
 
   frontend:
     build:

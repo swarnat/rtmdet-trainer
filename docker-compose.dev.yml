@@ -11,9 +11,10 @@ services:
       - ./backend:/srv/backend
       - ./common:/srv/common:ro
       - ./tests:/srv/tests:ro
+      - ./backup:/srv/backup:ro
     environment:
-      # shared code from the mount takes precedence over the installed odcore package
-      PYTHONPATH: /srv/common
+      # shared code from the mounts takes precedence over the installed packages
+      PYTHONPATH: /srv/common:/srv/backup
     # migrations run on container start only (`docker compose restart api` after adding one)
     command:
       - sh

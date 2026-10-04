@@ -62,6 +62,8 @@ export interface ImageItem {
   suggestion_count: number | null
   reviewed_classes: string[] | null
   needs_review: boolean
+  /** link count: training snapshots (models) that use this image */
+  snapshot_refs: number
   created_at: string
   updated_at: string
   labeled_at: string | null
@@ -274,6 +276,8 @@ export interface DatasetStats {
   images_unlabeled: number
   images_negative: number
   images_needs_review: number
+  /** deleted images whose files are kept because training snapshots still use them */
+  images_retained_for_snapshots?: number
   splits: { train: number; validation: number }
   annotations_per_class: Record<string, number>
   hard_negatives_per_class: Record<string, number>
@@ -301,6 +305,33 @@ export interface DeploymentStatus {
   reachable: boolean
   model: { version: string; architecture: string | null; class_names: string[]; input_width: number; input_height: number; installed_at: string | null } | null
   error: string | null
+  /** problems reported by the production system, e.g. missing CPU instruction sets */
+  warnings: string[]
+}
+
+export interface Backup {
+  name: string
+  file: string
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'invalid'
+  phase?: 'inventory' | 'database' | 'images' | 'datasets' | 'models' | 'finalizing' | null
+  source?: 'ui' | 'cli' | 'imported'
+  created_at: string | null
+  finished_at?: string | null
+  duration_s?: number
+  size_bytes?: number
+  estimated_bytes?: number
+  file_exists?: boolean
+  error: string | null
+  warnings?: string[]
+  contents?: Record<string, number>
+  progress?: { objects_done: number; objects_total: number; bytes_done: number; bytes_total: number }
+}
+
+export interface BackupList {
+  backups: Backup[]
+  busy: boolean
+  free_bytes: number | null
+  available: boolean
 }
 
 export class ApiError extends Error {
@@ -433,6 +464,12 @@ export const api = {
   // production system (inference-server)
   deploymentStatus: () => request<DeploymentStatus>('/deployment'),
   deployModel: (version: string) => request<{ version: string }>('/deployment', json('POST', { version })),
+
+  // backups
+  listBackups: () => request<BackupList>('/backups'),
+  startBackup: () => request<Backup>('/backups', { method: 'POST' }),
+  deleteBackup: (name: string) => request<void>(`/backups/${name}`, { method: 'DELETE' }),
+  backupDownloadUrl: (name: string) => `${BASE}/backups/${name}/download`,
 
   // settings
   getSettings: () => request<{ values: Settings; defaults: Settings }>('/settings'),

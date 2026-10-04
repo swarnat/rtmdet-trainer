@@ -5,9 +5,12 @@ import os
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from odcore.architectures import BASE_MODELS, get_base_model
+from odcore.db import TrainingRun
+from odcore.snapshots import release_snapshot
 from odcore.storage import ObjectStorage
 
 from app.core.database import get_db
@@ -121,8 +124,10 @@ def archive_model(version: str, session: Session = Depends(get_db)) -> ModelVers
     "/{version}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a model version",
-    description="Removes the version and its artifacts under s3://models/<version>/ (a shared COCO base checkpoint is kept). "
-    "Not possible for the production model or while a training run or batch test uses the version.",
+    description="Removes the version and its artifacts under s3://models/<version>/ (a shared COCO base checkpoint is kept) "
+    "and releases the dataset snapshot of its training run (image link counts decrease; images deleted in the meantime "
+    "are purged once no snapshot uses them). Not possible for the production model or while a training run or batch "
+    "test uses the version.",
 )
 def delete_model(
     version: str,
@@ -131,10 +136,13 @@ def delete_model(
     registry: ModelRegistry = Depends(get_registry),
 ) -> Response:
     mv = get_or_404(session, version)
+    run_ids = {mv.training_run_id} | set(session.scalars(select(TrainingRun.id).where(TrainingRun.model_version_id == mv.id)))
     try:
         repo.delete(session, mv)
     except ValueError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    for run_id in filter(None, run_ids):  # without the model, its training snapshot is no longer needed
+        release_snapshot(session, storage, run_id)
     # The row is gone first: if S3 fails, only unreferenced files remain.
     try:
         removed = storage.delete_prefix(storage.settings.bucket_models, f"{version}/")

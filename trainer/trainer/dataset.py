@@ -6,7 +6,11 @@ For every training run the labeled images are frozen into
     manifest.json             image ids, sha256, splits, source keys, stats
     annotations/train.json    COCO detection format
     annotations/val.json
-    images/<sha256>.<ext>     copies of the images (survive later deletions)
+    images/hn_<id>.jpg        hard-negative crops (derived per run)
+
+The images themselves are not copied: the run links them (``odcore.snapshots``, link count
+``images.snapshot_refs``) and they are read from the images bucket. Images are content-addressed
+and immutable, and a linked image is only hidden when deleted, so the snapshot stays complete.
 
 Splits are persisted on the image the first time it is used and never
 re-rolled. Labeled images without boxes are included as negatives.
@@ -37,6 +41,7 @@ from odcore.classes import is_reviewed_for
 from odcore.db import AnnotationStatus, DatasetSplit, Image
 from odcore.geometry import xyxy_to_xywh
 from odcore.settings_store import get_setting
+from odcore.snapshots import link_images
 from odcore.splits import assign_split
 from odcore.storage import ObjectStorage
 
@@ -113,12 +118,14 @@ def split_stats(coco: dict) -> dict:
 
 
 def create_snapshot(session: Session, s3: ObjectStorage, run_id: int, local_root: str, class_names: list[str]) -> Snapshot:
+    # row lock until the links are committed: a concurrent delete waits and then only hides the image
     labeled = list(
         session.execute(
             select(Image)
-            .where(Image.annotation_status == AnnotationStatus.labeled)
+            .where(Image.annotation_status == AnnotationStatus.labeled, Image.deleted_at.is_(None))
             .options(selectinload(Image.annotations))
             .order_by(Image.id)
+            .with_for_update(of=Image)
         ).scalars()
     )
     images = [i for i in labeled if is_reviewed_for(i.reviewed_classes, class_names)]
@@ -129,13 +136,16 @@ def create_snapshot(session: Session, s3: ObjectStorage, run_id: int, local_root
     for img in images:
         if img.dataset_split is None:
             img.dataset_split = DatasetSplit(assign_split(img.sha256, ratio))
-    session.commit()
 
     by_split = {s: [i for i in images if i.dataset_split == s] for s in SPLIT_FILES}
     if not by_split[DatasetSplit.train]:
+        session.commit()
         raise RuntimeError(f"dataset has no usable labeled training images for classes {class_names}")
     if not by_split[DatasetSplit.validation]:
+        session.commit()
         raise RuntimeError(f"dataset has no usable labeled validation images for classes {class_names}")
+    link_images(session, run_id, (i.id for i in images))
+    session.commit()
 
     prefix = f"{run_id}/"
     bucket_ds = s3.settings.bucket_datasets
@@ -144,13 +154,11 @@ def create_snapshot(session: Session, s3: ObjectStorage, run_id: int, local_root
     os.makedirs(os.path.join(local_dir, "annotations"), exist_ok=True)
     os.makedirs(os.path.join(local_dir, "images"), exist_ok=True)
 
-    def copy_one(img: Image) -> None:
-        name = image_file_name(img)
-        s3.copy(bucket_img, img.s3_object_key, bucket_ds, f"{prefix}images/{name}")
-        s3.download_file(bucket_ds, f"{prefix}images/{name}", os.path.join(local_dir, "images", name))
+    def download(img: Image) -> None:  # straight from the image library, no copy in the datasets bucket
+        s3.download_file(bucket_img, img.s3_object_key, os.path.join(local_dir, "images", image_file_name(img)))
 
     with ThreadPoolExecutor(max_workers=8) as pool:
-        list(pool.map(copy_one, images))
+        list(pool.map(download, images))
 
     stats: dict = {"classes": list(class_names), "excluded_needs_review": excluded}
     cocos = {split: build_coco(by_split[split], class_names) for split in SPLIT_FILES}
@@ -297,7 +305,8 @@ def current_validation_set(session: Session, s3: ObjectStorage, local_root: str,
     candidates = list(
         session.execute(
             select(Image)
-            .where(Image.annotation_status == AnnotationStatus.labeled, Image.dataset_split == DatasetSplit.validation)
+            .where(Image.annotation_status == AnnotationStatus.labeled, Image.dataset_split == DatasetSplit.validation,
+                   Image.deleted_at.is_(None))
             .options(selectinload(Image.annotations))
         ).scalars()
     )

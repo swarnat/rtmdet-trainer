@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from odcore.geometry import decode_image
 
 from app.config import MIN_ACCESS_KEY_LENGTH, Settings, get_settings
+from app.cpu import CpuCheck, check_cpu
 from app.model_store import ActiveModel, InvalidModelError, ModelManifest, ModelStore, NoModelError
 
 log = logging.getLogger(__name__)
@@ -72,11 +73,20 @@ class DetectResponse(BaseModel):
     detections: list[DetectionOut]
 
 
+class CpuInfo(BaseModel):
+    model: Optional[str]
+    supported: Optional[bool] = Field(description="False: models cannot be loaded; None: not checked (non-Linux)")
+    missing_required: list[str]
+    missing_recommended: list[str]
+
+
 class Health(BaseModel):
     status: str
     model_loaded: bool
     model_version: Optional[str]
     uploads_enabled: bool
+    cpu: CpuInfo
+    warnings: list[str] = Field(description="problems an operator should fix (e.g. missing CPU instruction sets)")
 
 
 def model_info(model: ActiveModel) -> ModelInfo:
@@ -92,6 +102,10 @@ async def lifespan(app: FastAPI):
     logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     if not settings.uploads_enabled:
         log.warning("model uploads are disabled: set MODEL_UPLOAD_KEY (at least %d characters)", MIN_ACCESS_KEY_LENGTH)
+    cpu = check_cpu()
+    app.state.cpu = cpu
+    for warning in cpu.warnings():
+        (log.error if cpu.missing_required else log.warning)("%s (CPU model: %s)", warning, cpu.model)
     store = ModelStore(settings.model_dir, settings.openvino_device)
     store.load_active()
     app.state.store = store
@@ -110,6 +124,10 @@ app = FastAPI(
 
 def get_store(request: Request) -> ModelStore:
     return request.app.state.store
+
+
+def get_cpu(request: Request) -> CpuCheck:
+    return request.app.state.cpu
 
 
 async def read_limited(file: UploadFile, max_mb: int) -> bytes:
@@ -141,10 +159,21 @@ def require_upload_key(
 
 
 @app.get(f"{API_PREFIX}/health", response_model=Health, tags=["status"])
-def health(store: ModelStore = Depends(get_store), settings: Settings = Depends(get_settings)) -> Health:
+def health(store: ModelStore = Depends(get_store), settings: Settings = Depends(get_settings),
+           cpu: CpuCheck = Depends(get_cpu)) -> Health:
     model = store.active()
-    return Health(status="ok", model_loaded=model is not None, model_version=model.manifest.version if model else None,
-                  uploads_enabled=settings.uploads_enabled)
+    warnings = cpu.warnings()
+    if not settings.uploads_enabled:
+        warnings.append(f"model uploads are disabled: set MODEL_UPLOAD_KEY (at least {MIN_ACCESS_KEY_LENGTH} characters)")
+    return Health(
+        status="ok" if cpu.supported is not False else "degraded",
+        model_loaded=model is not None,
+        model_version=model.manifest.version if model else None,
+        uploads_enabled=settings.uploads_enabled,
+        cpu=CpuInfo(model=cpu.model, supported=cpu.supported, missing_required=cpu.missing_required,
+                    missing_recommended=cpu.missing_recommended),
+        warnings=warnings,
+    )
 
 
 @app.get(f"{API_PREFIX}/model", response_model=ModelInfo, tags=["model"], summary="The active model")
@@ -171,6 +200,7 @@ async def put_model(
     model_bin: Annotated[UploadFile, File(description="OpenVINO model.bin")],
     store: ModelStore = Depends(get_store),
     settings: Settings = Depends(get_settings),
+    cpu: CpuCheck = Depends(get_cpu),
 ) -> ModelInfo:
     try:
         parsed = ModelManifest.model_validate_json(manifest)
@@ -182,8 +212,11 @@ async def put_model(
             store.install, parsed, model_xml.file, model_bin.file, settings.max_model_upload_mb * 1024 * 1024
         )
     except InvalidModelError as exc:
-        log.warning("model upload %s rejected: %s", parsed.version, exc)
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        detail = str(exc)
+        if cpu.missing_required:  # the usual reason why a valid model cannot be loaded
+            detail = f"{detail} | {cpu.warnings()[0]}"
+        log.warning("model upload %s rejected: %s", parsed.version, detail)
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail) from exc
     return model_info(model)
 
 

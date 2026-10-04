@@ -70,6 +70,8 @@ class ImageOut(BaseModel):
     reviewed_classes: Optional[list[str]] = None
     # labeled, but not checked for all currently active classes
     needs_review: bool = False
+    # link count: training snapshots (models) that use this image
+    snapshot_refs: int = 0
     created_at: datetime
     updated_at: datetime
     labeled_at: Optional[datetime]

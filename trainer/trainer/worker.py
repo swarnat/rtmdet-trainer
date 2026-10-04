@@ -3,8 +3,9 @@
 Start-up sequence:
 1. wait for PostgreSQL/Redis/S3 and the DB schema (migrated by the API)
 2. mark runs left in 'running' by a crashed/restarted worker as failed
-3. optionally import the COCO bootstrap model if no model exists yet
-4. process jobs one at a time (GPU training must not run concurrently)
+3. release snapshots no longer needed, convert old snapshots with image copies (``odcore.snapshots``)
+4. optionally import the COCO bootstrap model if no model exists yet
+5. process jobs one at a time (GPU training must not run concurrently)
 
 Every job runs in a fresh subprocess (see ``trainer.run_job``); the worker
 process itself never imports torch/CUDA.
@@ -23,6 +24,7 @@ from rq import Queue, Worker
 from sqlalchemy import inspect, select
 
 from odcore.db import ModelVersion, TrainingRun, TrainingStatus, utcnow
+from odcore.snapshots import convert_legacy_snapshots, release_snapshot, release_unneeded_snapshots
 
 from .config import get_settings
 from .db import session_factory, storage
@@ -51,17 +53,41 @@ def _run_subprocess(*args: str) -> None:
 def run_training_job(run_id: int) -> None:
     # forked work horse: never reuse the parent's pooled DB connections
     session_factory().kw["bind"].dispose(close=False)
+    sweep_snapshots()  # e.g. runs cancelled while their snapshot was being created
     try:
         _run_subprocess("train", str(run_id))
     finally:
+        finish_training_run(run_id)
+
+
+def finish_training_run(run_id: int) -> None:
+    """After the training process ended in any way: record a missing failure, release unneeded snapshots."""
+    with session_factory()() as session:
+        run = session.get(TrainingRun, run_id)
         # The process may have been killed (OOM etc.) before it could record the failure.
-        with session_factory()() as session:
-            run = session.get(TrainingRun, run_id)
-            if run is not None and run.status == TrainingStatus.running:
-                run.status = TrainingStatus.failed
-                run.error = run.error or "training process terminated unexpectedly (see trainer logs)"
-                run.finished_at = utcnow()
-                session.commit()
+        if run is not None and run.status == TrainingStatus.running:
+            run.status = TrainingStatus.failed
+            run.error = run.error or "training process terminated unexpectedly (see trainer logs)"
+            run.finished_at = utcnow()
+            session.commit()
+        if run is not None and run.status == TrainingStatus.failed:
+            # a failed run produces no model: its snapshot (image links, files) is not needed
+            release_snapshot(session, storage(), run_id)
+
+
+class TrainerWorker(Worker):
+    """RQ worker that also cleans up when the work horse itself was killed (job stopped via
+    "Abbrechen", OOM): then the ``finally`` block of ``run_training_job`` never ran."""
+
+    def monitor_work_horse(self, job, queue):
+        try:
+            super().monitor_work_horse(job, queue)
+        finally:
+            if job.func_name == "trainer.worker.run_training_job" and job.args:
+                try:
+                    finish_training_run(int(job.args[0]))
+                except Exception:
+                    log.exception("clean-up after training job %s failed", job.id)
 
 
 def run_bootstrap_job(force: bool = False, base_id: str = "rtmdet-s-coco") -> None:
@@ -74,7 +100,7 @@ def wait_for_dependencies(timeout: float = 300) -> None:
     while True:
         try:
             with session_factory()() as session:
-                if not inspect(session.get_bind()).has_table("training_runs"):
+                if not inspect(session.get_bind()).has_table("snapshot_images"):
                     raise RuntimeError("database schema not migrated yet")
             Redis.from_url(get_settings().redis_url).ping()
             storage().check_buckets()
@@ -97,6 +123,25 @@ def fail_stale_runs() -> None:
         session.commit()
 
 
+def sweep_snapshots() -> None:
+    """Release snapshots of failed runs and of deleted models; purge images no snapshot needs."""
+    try:
+        with session_factory()() as session:
+            released = release_unneeded_snapshots(session, storage())
+            if released:
+                log.info("released %d unneeded dataset snapshot(s)", released)
+    except Exception:
+        log.exception("snapshot sweep failed")
+
+
+def convert_snapshots() -> None:
+    try:
+        with session_factory()() as session:
+            convert_legacy_snapshots(session, storage())
+    except Exception:
+        log.exception("conversion of old dataset snapshots failed (retried on next start)")
+
+
 def maybe_bootstrap() -> None:
     if not get_settings().bootstrap_on_start:
         return
@@ -114,11 +159,13 @@ def main() -> None:
     settings = get_settings()
     wait_for_dependencies()
     fail_stale_runs()
+    sweep_snapshots()
+    convert_snapshots()
     maybe_bootstrap()
     redis = Redis.from_url(settings.redis_url)
     queue = Queue(settings.queue, connection=redis)
     log.info("listening on queue '%s'", settings.queue)
-    Worker([queue], connection=redis, name=None).work(with_scheduler=False, logging_level="INFO")
+    TrainerWorker([queue], connection=redis, name=None).work(with_scheduler=False, logging_level="INFO")
 
 
 if __name__ == "__main__":

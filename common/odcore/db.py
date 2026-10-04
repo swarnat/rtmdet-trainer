@@ -82,6 +82,12 @@ class Image(Base):
     # is only used for training if it was checked for every class of the run, so
     # adding a class never turns unreviewed objects into "background".
     reviewed_classes: Mapped[Optional[list[str]]] = mapped_column(JSONType)
+    # Link count (like nlink in a Unix file system): number of dataset snapshots (training runs)
+    # that use this image. Snapshots reference the file in the images bucket instead of copying it,
+    # so a referenced image is only hidden when deleted (``deleted_at``); its file is removed when
+    # the last snapshot referencing it is released. Kept in sync with ``snapshot_images``.
+    snapshot_refs: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow, server_default=func.now()
@@ -90,6 +96,15 @@ class Image(Base):
     annotations: Mapped[list["Annotation"]] = relationship(
         back_populates="image", cascade="all, delete-orphan", order_by="Annotation.id"
     )
+
+
+class SnapshotImage(Base):
+    """Link between a training run's dataset snapshot and an image it uses (see ``Image.snapshot_refs``)."""
+
+    __tablename__ = "snapshot_images"
+
+    training_run_id: Mapped[int] = mapped_column(ForeignKey("training_runs.id", ondelete="CASCADE"), primary_key=True)
+    image_id: Mapped[int] = mapped_column(ForeignKey("images.id"), primary_key=True, index=True)
 
 
 class Annotation(Base):

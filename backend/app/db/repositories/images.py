@@ -32,7 +32,7 @@ def list_images(
     offset: int = 0,
     limit: int = 100,
 ) -> tuple[int, list[Image]]:
-    stmt = select(Image)
+    stmt = select(Image).where(Image.deleted_at.is_(None))  # hidden: deleted, still used by a snapshot
     if status is not None:
         stmt = stmt.where(Image.annotation_status == status)
     if split is not None:
@@ -51,7 +51,7 @@ def list_images(
 
 
 def neighbour_ids(session: Session, image_id: int, status: Optional[AnnotationStatus]) -> tuple[Optional[int], Optional[int]]:
-    base = select(Image.id)
+    base = select(Image.id).where(Image.deleted_at.is_(None))
     if status is not None:
         base = base.where(Image.annotation_status == status)
     prev_id = session.scalar(base.where(Image.id < image_id).order_by(Image.id.desc()).limit(1))
@@ -60,4 +60,5 @@ def neighbour_ids(session: Session, image_id: int, status: Optional[AnnotationSt
 
 
 def get_by_sha(session: Session, sha256: str) -> Optional[Image]:
+    """Also returns a hidden (deleted but still linked) image: an upload of the same content revives it."""
     return session.execute(select(Image).where(Image.sha256 == sha256)).scalars().first()

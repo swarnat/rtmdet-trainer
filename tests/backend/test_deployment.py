@@ -131,3 +131,15 @@ def test_status(client, remote):
     remote.response = httpx.Response(404, json={"detail": "no model installed yet"})
     body = client.get("/api/v1/deployment").json()
     assert body["reachable"] is True and body["model"] is None and body["error"] is None
+
+
+def test_status_passes_on_warnings_of_the_production_system(client, monkeypatch):
+    configure(client)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, json={"status": "degraded", "warnings": ["CPU lacks sse4_1, sse4_2 (required by OpenVINO)"]})
+        return httpx.Response(404, json={"detail": "no model installed yet"})
+
+    monkeypatch.setattr(deployment, "http_client", lambda timeout: httpx.Client(transport=httpx.MockTransport(handler)))
+    assert client.get("/api/v1/deployment").json()["warnings"] == ["CPU lacks sse4_1, sse4_2 (required by OpenVINO)"]

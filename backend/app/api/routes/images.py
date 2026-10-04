@@ -10,9 +10,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from odcore.classes import active_class_names, is_reviewed_for
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 
-from odcore.db import AnnotationStatus, DatasetSplit, Image, ImageSuggestion
+from odcore.db import AnnotationStatus, DatasetSplit, Image, ImageSuggestion, utcnow
 from odcore.geometry import decode_image
 from odcore.storage import ObjectStorage
 
@@ -35,7 +36,7 @@ router = APIRouter(prefix="/images", tags=["training images"])
 
 def get_image_or_404(session: Session, image_id: int) -> Image:
     image = session.get(Image, image_id)
-    if image is None:
+    if image is None or image.deleted_at is not None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"image {image_id} not found")
     return image
 
@@ -80,6 +81,13 @@ def store_upload(session: Session, storage: ObjectStorage, filename: Optional[st
         return UploadResult(filename=filename, status="error", error=str(exc))
 
     existing = repo.get_by_sha(session, decoded.sha256)
+    if existing is not None and existing.deleted_at is not None:
+        # deleted, but its file was kept for training snapshots: bring it back as a new, unlabeled image
+        existing.deleted_at = None
+        existing.original_filename = (filename or "")[:512] or existing.original_filename
+        session.commit()
+        log.info("re-uploaded image %s restored (file was kept for %d snapshot(s))", existing.id, existing.snapshot_refs)
+        return UploadResult(filename=filename, status="created", image=to_out(existing, 0))
     if existing is not None:
         return UploadResult(filename=filename, status="duplicate", image=to_out(existing, sum(1 for a in existing.annotations if a.type == "positive")))
 
@@ -211,13 +219,30 @@ def update_image(image_id: int, body: ImageUpdate, session: Session = Depends(ge
     return to_detail(image, active_class_names(session), session)
 
 
-@router.delete("/{image_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete an image and its annotations")
+@router.delete(
+    "/{image_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete an image and its annotations",
+    description="If training snapshots still use the image (snapshot_refs > 0), it is only hidden and its file is kept "
+    "until the last of these snapshots is released (failed run or deleted model).",
+)
 def delete_image(image_id: int, session: Session = Depends(get_db), storage: ObjectStorage = Depends(get_storage)) -> Response:
-    image = get_image_or_404(session, image_id)
+    get_image_or_404(session, image_id)
+    # row lock: a training run that is linking this image right now finishes first
+    image = session.get(Image, image_id, with_for_update=True, populate_existing=True)
+    if image.snapshot_refs > 0:
+        image.deleted_at = utcnow()
+        image.annotations.clear()  # the snapshots keep their own frozen annotations
+        session.execute(sa_delete(ImageSuggestion).where(ImageSuggestion.image_id == image_id))
+        image.annotation_status = AnnotationStatus.unlabeled
+        image.reviewed_classes = None
+        image.labeled_at = None
+        session.commit()
+        log.info("image %s hidden; file kept for %d training snapshot(s)", image_id, image.snapshot_refs)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
     keys = [image.s3_object_key, image.thumbnail_key]
     session.delete(image)
     session.commit()
-    # Existing dataset snapshots contain their own copies, so they stay reproducible.
     for key in filter(None, keys):
         try:
             storage.delete(storage.settings.bucket_images, key)

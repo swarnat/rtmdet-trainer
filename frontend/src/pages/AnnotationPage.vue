@@ -27,6 +27,9 @@
             {{ store.image.annotation_status === 'labeled' ? (store.image.annotation_count ? 'annotiert' : 'negativ') : 'offen' }}
           </q-badge>
           <q-badge v-if="store.image.dataset_split" outline color="primary" class="q-ml-xs">{{ store.image.dataset_split }}</q-badge><HelpIcon v-if="store.image.dataset_split" term="split" inline />
+          <q-badge v-if="store.image.snapshot_refs" outline color="blue-grey-3" class="q-ml-xs">
+            <q-icon name="link" size="12px" class="q-mr-xs" />in {{ store.image.snapshot_refs }} Training(s)
+          </q-badge><HelpIcon v-if="store.image.snapshot_refs" term="snapshotRefs" inline />
           <q-badge v-if="store.image.needs_review" outline color="warning" class="q-ml-xs">nachprüfen</q-badge><HelpIcon v-if="store.image.needs_review" term="needsReview" inline />
           <q-badge v-if="store.dirty" outline color="orange-4" class="q-ml-xs">ungespeichert</q-badge>
         </div>
@@ -483,7 +486,10 @@ function deleteImage() {
   if (!img) return
   $q.dialog({
     title: 'Bild löschen',
-    message: `Bild #${img.id} inklusive Annotationen endgültig löschen? (Bestehende Dataset-Snapshots bleiben erhalten.)`,
+    message: img.snapshot_refs
+      ? `Bild #${img.id} inklusive Annotationen löschen? Es wird in ${img.snapshot_refs} Training(s) verwendet: Es verschwindet aus ` +
+        'der Liste, die Datei bleibt aber erhalten, bis das letzte dieser Modelle gelöscht ist.'
+      : `Bild #${img.id} inklusive Annotationen endgültig löschen?`,
     cancel: { label: 'Abbrechen', flat: true },
     ok: { label: 'Löschen', color: 'negative' },
   }).onOk(async () => {

@@ -19,6 +19,10 @@
           Produktivsystem nicht eingerichtet
           <q-tooltip>URL und Access Key unter Einstellungen → Produktivsystem eintragen</q-tooltip>
         </q-chip>
+        <q-chip v-if="deployment?.warnings?.length" dense outline color="warning" icon="warning">
+          Warnung Produktivsystem
+          <q-tooltip max-width="420px">{{ deployment.warnings.join(' ') }}</q-tooltip>
+        </q-chip>
         <HelpIcon term="productionSystem" inline class="q-mr-sm" />
         <q-btn outline no-caps icon="download_for_offline" label="COCO-Basismodell importieren" @click="bootstrap" />
         <q-btn flat round dense icon="refresh" @click="models.refresh(); loadDeployment()" />
@@ -247,8 +251,10 @@ function remove(m: ModelVersion) {
     title: `${m.version} löschen`,
     message:
       `${m.version} und alle zugehörigen Dateien (ONNX, OpenVINO, Checkpoint, Metriken) werden endgültig gelöscht. ` +
-      'Das lässt sich nicht rückgängig machen. Trainingsläufe bleiben in der Liste, verlieren aber den Verweis auf das Modell. ' +
-      'Annotationen und Bilder sind nicht betroffen.',
+      'Das lässt sich nicht rückgängig machen. Trainingsläufe bleiben in der Liste, verlieren aber den Verweis auf das Modell; ' +
+      'der Datenstand ihres Trainings (Snapshot) wird freigegeben. ' +
+      'Bilder und Annotationen der Bibliothek sind nicht betroffen; bereits gelöschte Bilder, die nur noch dieses Modell ' +
+      'verwendet hat, werden jetzt endgültig entfernt.',
     cancel: { label: 'Abbrechen', flat: true },
     ok: { label: 'Endgültig löschen', color: 'negative' },
   }).onOk(async () => {

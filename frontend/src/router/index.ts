@@ -13,6 +13,7 @@ export default createRouter({
         { path: 'training', name: 'training', component: () => import('@/pages/TrainingPage.vue') },
         { path: 'models', name: 'models', component: () => import('@/pages/ModelsPage.vue') },
         { path: 'classes', name: 'classes', component: () => import('@/pages/ClassesPage.vue') },
+        { path: 'backups', name: 'backups', component: () => import('@/pages/BackupsPage.vue') },
         { path: 'settings', name: 'settings', component: () => import('@/pages/SettingsPage.vue') },
       ],
     },

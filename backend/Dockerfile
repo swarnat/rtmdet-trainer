@@ -22,6 +22,9 @@ print("\n".join(p["dependencies"] + p["optional-dependencies"]["test"]))
 PY
 RUN pip install -r /tmp/requirements.txt -c backend/requirements.lock && pip install --no-deps ./common
 
+COPY backup/pyproject.toml backup/requirements.lock /srv/backup/
+COPY backup/odbackup /srv/backup/odbackup
+RUN pip install --no-deps /srv/backup
 COPY backend /srv/backend
 COPY tests /srv/tests
 RUN pip install --no-deps -e /srv/backend

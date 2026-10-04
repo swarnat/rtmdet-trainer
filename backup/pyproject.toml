@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools==75.6.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "od-backup"
+version = "0.1.0"
+description = "Full backup/restore (PostgreSQL + S3 buckets) of the object detection stack as one tar file"
+requires-python = ">=3.11"
+dependencies = [
+    # boto3 >= 1.36 sends new default integrity checksums that older S3-compatible stores reject
+    "boto3==1.35.99",
+    "redis==5.2.1",
+    "rq==1.16.2",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest==8.3.4",
+]
+
+[project.scripts]
+odbackup = "odbackup.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["odbackup*"]

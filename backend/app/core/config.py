@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     s3_bucket_models: str = Field("models", alias="S3_BUCKET_MODELS")
 
     model_cache_dir: str = Field("/var/cache/od-models", alias="MODEL_CACHE_DIR")
+    # folder with the backup tar files (shared with the backup service)
+    backup_dir: str = Field("/backups", alias="BACKUP_DIR")
     openvino_device: str = Field("CPU", alias="OPENVINO_DEVICE")
     # Max. number of compiled (model version, resolution) pairs kept in memory
     compiled_model_cache_size: int = Field(6, alias="COMPILED_MODEL_CACHE_SIZE")

@@ -11,7 +11,8 @@ from odcore.db import Annotation, AnnotationStatus, DatasetSplit, Image
 def _labeled_rows(session: Session) -> list[tuple[int, DatasetSplit | None, list[str] | None]]:
     return list(
         session.execute(
-            select(Image.id, Image.dataset_split, Image.reviewed_classes).where(Image.annotation_status == AnnotationStatus.labeled)
+            select(Image.id, Image.dataset_split, Image.reviewed_classes)
+            .where(Image.annotation_status == AnnotationStatus.labeled, Image.deleted_at.is_(None))
         ).all()
     )
 
@@ -45,7 +46,8 @@ def eligibility(session: Session, class_names: list[str]) -> dict:
 
 
 def dataset_stats(session: Session) -> dict:
-    total = session.scalar(select(func.count(Image.id))) or 0
+    total = session.scalar(select(func.count(Image.id)).where(Image.deleted_at.is_(None))) or 0
+    hidden = session.scalar(select(func.count(Image.id)).where(Image.deleted_at.is_not(None))) or 0
     rows = _labeled_rows(session)
     active = active_class_names(session)
 
@@ -75,4 +77,6 @@ def dataset_stats(session: Session) -> dict:
         "splits": splits,
         "annotations_per_class": per_class,
         "hard_negatives_per_class": hard_negatives,
+        # deleted images whose files are kept because training snapshots still use them
+        "images_retained_for_snapshots": hidden,
     }

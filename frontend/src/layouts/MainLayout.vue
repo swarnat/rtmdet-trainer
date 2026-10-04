@@ -12,6 +12,7 @@
           <q-route-tab to="/training" label="Training" />
           <q-route-tab to="/models" label="Modelle" />
           <q-route-tab to="/classes" label="Klassen" />
+          <q-route-tab to="/backups" label="Backups" />
           <q-route-tab to="/settings" label="Einstellungen" />
         </q-tabs>
         <q-space />

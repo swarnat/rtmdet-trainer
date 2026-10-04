@@ -89,6 +89,19 @@ export const GLOSSARY = {
     'Einstellungen dafür, wie bekannte Fehlalarme (Hard Negatives) ins Training einfließen: Kontextfaktor = wie viel Umgebung um die Stelle mitgenommen wird, ' +
     'Mindestbreite = wie klein der Ausschnitt höchstens werden darf, Oversampling = wie oft er im Training wiederholt wird (0 = gar nicht, nur Prüfung).',
   hn: 'HN = Hard Negatives: bekannte Fehlalarme, also Stellen, an denen ein Modell fälschlich etwas erkannt hat.',
+  snapshotRefs:
+    'Verwendet in Trainings: In wie vielen Trainingsständen (Modellen) dieses Bild steckt – wie der Link-Zähler einer Datei. ' +
+    'Ein Training merkt sich seine Bilder, statt sie zu kopieren. Löschst du ein Bild, das noch verwendet wird, verschwindet es nur aus der ' +
+    'Liste; die Datei bleibt, damit nachvollziehbar bleibt, womit die Modelle trainiert wurden. Sie wird automatisch gelöscht, sobald das ' +
+    'letzte dieser Modelle gelöscht ist. Fehlgeschlagene oder abgebrochene Trainings zählen nicht.',
+  backup:
+    'Backup: Eine einzige Datei (.tar) mit allem, was das System ausmacht – Datenbank (Bilder-Verwaltung, Annotationen, Klassen, ' +
+    'Einstellungen, Trainingsläufe, Modellverwaltung), alle Bilder, alle Dataset-Snapshots und alle Modelle. Läuft im Hintergrund; ' +
+    'du kannst die Seite währenddessen verlassen.',
+  restore:
+    'Wiederherstellen ersetzt den kompletten aktuellen Stand durch den Stand des Backups. Alles, was danach entstanden ist, geht verloren. ' +
+    'Deshalb geht das bewusst nur auf der Kommandozeile: Der Befehl stoppt API und Trainer, prüft die Datei vollständig, stellt alles wieder her ' +
+    'und startet das System neu.',
   productionSystem:
     'Produktivsystem: Ein separater Server, der im laufenden Betrieb Bilder prüft. Er hat immer genau ein aktives Modell, ' +
     'das von hier aus mit „Ausrollen“ übertragen wird. Unabhängig davon, welches Modell hier „production“ ist.',

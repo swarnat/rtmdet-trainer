@@ -19,6 +19,8 @@ from conftest import make_local_registry
 class RecordingStorage:
     class settings:  # noqa: N801 - mimics S3Settings attributes
         bucket_models = "models"
+        bucket_datasets = "datasets"
+        bucket_images = "training-images"
 
     def __init__(self):
         self.deleted_prefixes: list[tuple[str, str]] = []

@@ -65,6 +65,10 @@
                 <q-tooltip>Noch nicht auf alle aktiven Klassen geprüft</q-tooltip>
               </q-badge>
               <q-badge v-if="img.dataset_split" outline color="primary" class="q-ml-xs" :label="img.dataset_split === 'train' ? 'train' : 'val'" />
+              <q-badge v-if="img.snapshot_refs" outline color="blue-grey-3" class="q-ml-xs">
+                <q-icon name="link" size="12px" class="q-mr-xs" />{{ img.snapshot_refs }}
+                <q-tooltip max-width="320px">In {{ img.snapshot_refs }} Training(s) verwendet. {{ GLOSSARY.snapshotRefs }}</q-tooltip>
+              </q-badge>
             </q-item-label>
           </q-item-section>
         </q-item>
@@ -83,6 +87,7 @@
 import { onMounted, ref, watch } from 'vue'
 import { useQuasar } from 'quasar'
 import BatchTestDialog from './BatchTestDialog.vue'
+import { GLOSSARY } from '@/glossary'
 import { api, errorMessage, type BatchTest, type ImageItem } from '@/services/api'
 
 const props = defineProps<{ selectedId: number | null }>()

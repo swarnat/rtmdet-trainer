@@ -15,3 +15,4 @@ class DeploymentStatus(BaseModel):
     reachable: bool
     model: Optional[dict[str, Any]] = Field(description="active model of the production system (None = none installed)")
     error: Optional[str]
+    warnings: list[str] = Field(default_factory=list, description="problems reported by the production system")
