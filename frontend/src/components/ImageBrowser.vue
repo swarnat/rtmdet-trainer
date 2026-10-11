@@ -9,17 +9,26 @@
         map-options
         options-dense
         label="Filter"
-        :options="[
-          { label: 'Alle Bilder', value: 'all' },
-          { label: 'Offen', value: 'unlabeled' },
-          { label: 'Fertig annotiert', value: 'labeled' },
-          { label: 'Negativ (ohne Objekte)', value: 'negative' },
-          { label: 'Nachprüfen (neue Klassen)', value: 'review' },
-          { label: 'Mit Vorschlägen (Batch-Test)', value: 'suggestions' },
-        ]"
-      />
+        :options="filterOptions"
+        :option-disable="(o: FilterOption) => !!o.header"
+      >
+        <template #option="{ opt, itemProps }">
+          <q-item-label v-if="opt.header" header class="q-pt-sm q-pb-xs text-weight-medium">{{ opt.label }}</q-item-label>
+          <q-item v-else v-bind="itemProps" class="q-pl-lg">
+            <q-item-section>
+              <q-item-label>{{ opt.label }}</q-item-label>
+              <q-item-label v-if="opt.caption" caption>{{ opt.caption }}</q-item-label>
+            </q-item-section>
+          </q-item>
+        </template>
+      </q-select>
       <div class="row items-center no-wrap q-gutter-x-sm">
         <q-btn color="primary" icon="upload" label="Hochladen" dense no-caps no-wrap class="col q-py-xs" :loading="uploading" @click="fileInput?.click()" />
+        <q-btn color="primary" outline icon="cloud_download" label="Batch-Download" dense no-caps no-wrap class="col q-py-xs" @click="downloadDialog = true">
+          <q-tooltip>Bilder von einer Liste von URLs herunterladen</q-tooltip>
+        </q-btn>
+      </div>
+      <div class="row items-center no-wrap q-gutter-x-sm">
         <q-btn color="secondary" icon="playlist_play" label="Batch-Test" dense no-caps no-wrap class="col q-py-xs" @click="batchDialog = true">
           <q-tooltip>Modell auf allen offenen Bildern testen und Vorschläge speichern</q-tooltip>
         </q-btn>
@@ -27,12 +36,18 @@
       </div>
       <div v-if="runningBatch" class="cursor-pointer" @click="batchDialog = true">
         <div class="text-caption text-secondary">
-          Batch-Test #{{ runningBatch.id }} läuft: {{ runningBatch.processed }} / {{ runningBatch.total }}
+          {{ isErrorAnalysis(runningBatch) ? 'Fehleranalyse' : 'Batch-Test' }} #{{ runningBatch.id }} läuft: {{ runningBatch.processed }} / {{ runningBatch.total }}
         </div>
         <q-linear-progress :value="runningBatch.total ? runningBatch.processed / runningBatch.total : 0" color="secondary" rounded />
       </div>
+      <div v-if="download" class="cursor-pointer" @click="downloadDialog = true">
+        <div class="text-caption text-primary">Batch-Download: {{ download.done }} / {{ download.total }}</div>
+        <q-linear-progress :value="download.total ? download.done / download.total : 0" color="primary" rounded />
+      </div>
+      <UrlDownloadDialog v-model="downloadDialog" @progress="(p) => (download = p)" @finished="onDownloadFinished" />
       <BatchTestDialog v-model="batchDialog" @running="(b) => (runningBatch = b)" @finished="onBatchFinished" />
       <input ref="fileInput" type="file" accept="image/jpeg,image/png,image/webp,image/bmp" multiple hidden @change="onFiles" />
+      <q-btn v-if="filter === 'duplicates'" outline color="secondary" icon="compare" label="Duplikate prüfen und entscheiden" dense no-caps to="/duplicates" />
       <div class="text-caption text-muted">{{ total }} Bilder</div>
     </div>
     <q-separator />
@@ -57,6 +72,12 @@
               <q-badge v-else outline color="positive" :label="`${img.annotation_count} Boxen`" />
               <q-badge v-if="img.suggestion_count != null" outline color="secondary" class="q-ml-xs" :label="`${img.suggestion_count} Vorschl.`">
                 <q-tooltip>Vorschläge aus einem Batch-Test</q-tooltip>
+              </q-badge>
+              <q-badge v-if="img.duplicate_of" outline color="warning" class="q-ml-xs" :label="`Duplikat von #${img.duplicate_of}`">
+                <q-tooltip max-width="320px">Leeres Bild, fast identisch zu #{{ img.duplicate_of }} – wird nicht fürs Training verwendet</q-tooltip>
+              </q-badge>
+              <q-badge v-if="img.error_fp != null" outline color="negative" class="q-ml-xs" :label="`${img.error_fp} FP · ${img.error_fn} FN`">
+                <q-tooltip>Fehleranalyse: {{ img.error_fp }} Fehlalarme (False Positives), {{ img.error_fn }} nicht erkannte Objekte (False Negatives)</q-tooltip>
               </q-badge>
               <q-badge v-if="img.hard_negative_count" outline color="blue-grey-3" class="q-ml-xs" :label="`${img.hard_negative_count} HN`">
                 <q-tooltip>Hard Negatives (bekannte Fehlalarme)</q-tooltip>
@@ -86,18 +107,52 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { useQuasar } from 'quasar'
+import { useRoute } from 'vue-router'
 import BatchTestDialog from './BatchTestDialog.vue'
+import UrlDownloadDialog, { type DownloadProgress } from './UrlDownloadDialog.vue'
 import { GLOSSARY } from '@/glossary'
-import { api, errorMessage, type BatchTest, type ImageItem } from '@/services/api'
+import { api, errorMessage, isErrorAnalysis, type BatchTest, type ImageItem, type NavFilter } from '@/services/api'
 
 const props = defineProps<{ selectedId: number | null }>()
-const emit = defineEmits<{ select: [id: number]; filterChange: [status: string | undefined]; batchFinished: [] }>()
+const emit = defineEmits<{ select: [id: number]; filterChange: [filter: NavFilter]; batchFinished: [] }>()
 const $q = useQuasar()
 
 const PAGE = 100
-const filter = ref<'all' | 'unlabeled' | 'labeled' | 'negative' | 'review' | 'suggestions'>('all')
+type Filter = 'all' | 'unlabeled' | 'last_upload' | 'unlabeled_no_suggestions' | 'sugg_high' | 'sugg_medium' | 'sugg_low' | 'labeled' | 'negative' | 'review' | 'suggestions' | 'train' | 'validation' | 'errors' | 'duplicates'
+interface FilterOption {
+  label: string
+  value?: Filter
+  caption?: string
+  header?: boolean
+}
+const filterOptions: FilterOption[] = [
+  { label: 'Alle Bilder', value: 'all' },
+  { label: 'Offene Bilder', header: true },
+  { label: 'Alle offenen', value: 'unlabeled' },
+  { label: 'Aus letztem Upload', value: 'last_upload', caption: 'jüngste Upload-Sitzung (Pausen < 30 min)' },
+  { label: 'Ohne Vorschläge', value: 'unlabeled_no_suggestions', caption: 'Batch-Test fand nichts oder lief noch nicht' },
+  { label: 'Mit Vorschlägen (alle)', value: 'suggestions' },
+  { label: 'Vorschläge ≥ 0,7', value: 'sugg_high', caption: 'alle sicher – meist „Alle übernehmen“' },
+  { label: 'Vorschläge 0,4–0,7', value: 'sugg_medium', caption: 'unsicherster Vorschlag mittel' },
+  { label: 'Vorschläge < 0,4', value: 'sugg_low', caption: 'mindestens einer unsicher – genau prüfen' },
+  { label: 'Annotierte Bilder', header: true },
+  { label: 'Alle annotierten', value: 'labeled' },
+  { label: 'Negativ (ohne Objekte)', value: 'negative' },
+  { label: 'Nachprüfen (neue Klassen)', value: 'review' },
+  { label: 'Trainingsbilder', value: 'train' },
+  { label: 'Validierungsbilder', value: 'validation' },
+  { label: 'Fehlerbilder (Fehleranalyse)', value: 'errors' },
+  { label: 'Weitere', header: true },
+  { label: 'Duplikate (leere Bilder)', value: 'duplicates' },
+]
+const SUGGESTION_LEVEL = { sugg_high: 'high', sugg_medium: 'medium', sugg_low: 'low' } as const
+
+// ?filter=errors: opened from the training page after an error analysis
+const filter = ref<Filter>(useRoute().query.filter === 'errors' ? 'errors' : 'all')
 const batchDialog = ref(false)
 const runningBatch = ref<BatchTest | null>(null)
+const downloadDialog = ref(false)
+const download = ref<DownloadProgress | null>(null)
 const items = ref<ImageItem[]>([])
 const total = ref(0)
 const loading = ref(false)
@@ -106,10 +161,16 @@ const fileInput = ref<HTMLInputElement | null>(null)
 
 function query(offset: number) {
   return api.listImages({
-    status: filter.value === 'unlabeled' || filter.value === 'labeled' ? filter.value : undefined,
+    status: ['unlabeled', 'unlabeled_no_suggestions', 'last_upload'].includes(filter.value) ? 'unlabeled' : filter.value === 'labeled' ? 'labeled' : undefined,
+    last_upload: filter.value === 'last_upload',
+    no_suggestions: filter.value === 'unlabeled_no_suggestions',
+    suggestion_level: filter.value in SUGGESTION_LEVEL ? SUGGESTION_LEVEL[filter.value as keyof typeof SUGGESTION_LEVEL] : undefined,
+    split: filter.value === 'train' || filter.value === 'validation' ? filter.value : undefined,
     negative: filter.value === 'negative',
     needs_review: filter.value === 'review',
     has_suggestions: filter.value === 'suggestions',
+    has_errors: filter.value === 'errors',
+    duplicate: filter.value === 'duplicates',
     offset,
     limit: PAGE,
   })
@@ -150,6 +211,7 @@ async function upload(files: File[]) {
   uploading.value = true
   let created = 0
   let duplicates = 0
+  let deleted = 0
   const errors: string[] = []
   try {
     // upload in chunks to keep requests small
@@ -158,12 +220,13 @@ async function upload(files: File[]) {
       for (const r of results) {
         if (r.status === 'created') created++
         else if (r.status === 'duplicate') duplicates++
+        else if (r.status === 'deleted') deleted++
         else errors.push(`${r.filename}: ${r.error}`)
       }
     }
     $q.notify({
       type: errors.length ? 'warning' : 'positive',
-      message: `${created} hochgeladen, ${duplicates} Duplikate${errors.length ? `, ${errors.length} Fehler` : ''}`,
+      message: `${created} hochgeladen, ${duplicates} Duplikate${deleted ? `, ${deleted} früher gelöscht` : ''}${errors.length ? `, ${errors.length} Fehler` : ''}`,
       caption: errors.slice(0, 3).join('; '),
     })
     await reload()
@@ -184,7 +247,27 @@ function onDrop(e: DragEvent) {
   upload(Array.from(e.dataTransfer?.files ?? []).filter((f) => f.type.startsWith('image/')))
 }
 
+function onDownloadFinished(p: DownloadProgress) {
+  $q.notify({
+    type: p.failed ? 'warning' : 'positive',
+    message: `Batch-Download: ${p.created} heruntergeladen, ${p.duplicates} Duplikate${p.deleted ? `, ${p.deleted} früher gelöscht` : ''}${p.failed ? `, ${p.failed} Fehler` : ''}`,
+    caption: p.done < p.total ? `abgebrochen nach ${p.done} von ${p.total} URLs` : undefined,
+  })
+  if (p.created) reload()
+}
+
 function onBatchFinished(b: BatchTest) {
+  if (isErrorAnalysis(b)) {
+    $q.notify({
+      type: b.status === 'completed' ? 'positive' : 'warning',
+      message: `Fehleranalyse #${b.id} ${b.status === 'completed' ? 'abgeschlossen' : b.status}: ${b.marked_images} von ${b.processed} Bildern mit Fehlern`,
+      caption: b.status === 'completed' ? 'Filter „Fehlerbilder“ zeigt die betroffenen Bilder' : (b.error ?? undefined),
+    })
+    if (b.status === 'completed') filter.value = 'errors'
+    reload()
+    emit('batchFinished')
+    return
+  }
   $q.notify({
     type: b.status === 'completed' ? 'positive' : 'warning',
     message: `Batch-Test #${b.id} ${b.status === 'completed' ? 'abgeschlossen' : b.status}: ${b.detections} Vorschläge für ${b.processed} Bilder`,
@@ -195,13 +278,29 @@ function onBatchFinished(b: BatchTest) {
   emit('batchFinished')
 }
 
-watch(filter, () => {
+function emitFilter() {
   // previous/next navigation: suggestions are on open images
-  const status = filter.value === 'suggestions' ? 'unlabeled' : filter.value
-  emit('filterChange', status === 'unlabeled' || status === 'labeled' ? status : undefined)
+  const f = filter.value === 'suggestions' ? 'unlabeled' : filter.value
+  const level = f in SUGGESTION_LEVEL ? SUGGESTION_LEVEL[f as keyof typeof SUGGESTION_LEVEL] : undefined
+  emit('filterChange', {
+    status: ['unlabeled', 'unlabeled_no_suggestions', 'last_upload'].includes(f) ? 'unlabeled' : f === 'labeled' ? 'labeled' : undefined,
+    last_upload: f === 'last_upload' || undefined,
+    split: f === 'train' || f === 'validation' ? f : undefined,
+    has_errors: f === 'errors' || undefined,
+    duplicate: f === 'duplicates' || undefined,
+    no_suggestions: f === 'unlabeled_no_suggestions' || undefined,
+    suggestion_level: level,
+  })
+}
+
+watch(filter, () => {
+  emitFilter()
   reload()
 })
-onMounted(reload)
+onMounted(() => {
+  if (filter.value !== 'all') emitFilter()
+  reload()
+})
 
 defineExpose({ reload, patch, items, props })
 </script>

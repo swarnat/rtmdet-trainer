@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from odcore.db import Annotation, AnnotationStatus, Image, ModelStatus, ModelVersion, SnapshotImage, TrainingRun, TrainingStatus
+from odcore.db import Annotation, AnnotationStatus, Image, ModelStatus, ModelVersion, SnapshotImage, TrainingRun, TrainingStatus, utcnow
 from odcore.snapshots import convert_legacy_snapshots, link_images, release_snapshot, release_unneeded_snapshots
 
 from app.core.database import get_db
@@ -166,7 +166,7 @@ def test_deleting_a_model_releases_its_snapshot(client, session_factory, storage
     assert storage.keys("datasets") == [] and storage.keys("training-images") == []
 
 
-def test_reupload_restores_a_hidden_image(client, session_factory, storage):
+def test_reupload_of_a_deleted_image_is_rejected(client, session_factory, storage):
     ok, buf = cv2.imencode(".jpg", np.full((90, 160, 3), 80, np.uint8))
     data = buf.tobytes()
     first = client.post("/api/v1/images", files=[("files", ("a.jpg", data, "image/jpeg"))]).json()[0]
@@ -177,9 +177,17 @@ def test_reupload_restores_a_hidden_image(client, session_factory, storage):
 
     again = client.post("/api/v1/images", files=[("files", ("b.jpg", data, "image/jpeg"))]).json()[0]
 
-    assert again["status"] == "created" and again["image"]["id"] == image_id
-    detail = client.get(f"/api/v1/images/{image_id}").json()
-    assert detail["annotation_status"] == "unlabeled" and detail["snapshot_refs"] == 1
+    # hidden (kept for the snapshot), but deleted for the user: not imported again
+    assert again["status"] == "deleted" and again["image"] is None
+    assert client.get(f"/api/v1/images/{image_id}").status_code == 404
+
+    # also after the image is gone completely (no snapshot): the tombstone stays
+    ok, buf = cv2.imencode(".jpg", np.full((90, 160, 3), 120, np.uint8))
+    other = client.post("/api/v1/images", files=[("files", ("c.jpg", buf.tobytes(), "image/jpeg"))]).json()[0]
+    client.delete(f"/api/v1/images/{other['image']['id']}")
+    with session_factory() as s:
+        assert s.get(Image, other["image"]["id"]) is None
+    assert client.post("/api/v1/images", files=[("files", ("c.jpg", buf.tobytes(), "image/jpeg"))]).json()[0]["status"] == "deleted"
 
 
 def test_sweep_releases_failed_runs_and_deleted_models(session_factory, storage):
@@ -227,3 +235,32 @@ def test_convert_legacy_snapshot_with_image_copies(session_factory, storage):
         # idempotent
         assert convert_legacy_snapshots(s, storage)["links"] == 0
         assert refs(s, a) == 1
+
+
+def test_every_ui_delete_path_leaves_a_tombstone(client, session_factory, storage):
+    """Annotation page, review page (DELETE /images/{id}) and duplicates page (resolve) all end in remove_image."""
+    from odcore.db import DeletedImage
+
+    ids = []
+    for value in (30, 60):
+        ok, buf = cv2.imencode(".jpg", np.full((90, 160, 3), value, np.uint8))
+        ids.append(client.post("/api/v1/images", files=[("files", (f"{value}.jpg", buf.tobytes(), "image/jpeg"))]).json()[0]["image"]["id"])
+    with session_factory() as s:
+        shas = {s.get(Image, i).sha256 for i in ids}
+    assert client.delete(f"/api/v1/images/{ids[0]}").status_code == 204
+    assert client.post("/api/v1/images/duplicates/resolve", json={"keep": [], "delete": [ids[1]]}).json()["deleted"] == 1
+    with session_factory() as s:
+        assert {d.sha256 for d in s.query(DeletedImage)} == shas
+
+
+def test_purge_of_hidden_images_keeps_the_tombstone(session_factory, storage):
+    from odcore.db import DeletedImage
+    from odcore.snapshots import purge_deleted_images
+
+    with session_factory() as s:
+        img = add_image(s, storage, 1)
+        image = s.get(Image, img)
+        image.deleted_at = utcnow()  # hidden without a tombstone (e.g. hidden before tombstones existed)
+        s.commit()
+        assert purge_deleted_images(s, storage) == 1
+        assert s.get(DeletedImage, image.sha256) is not None

@@ -6,7 +6,7 @@
         ref="browser"
         :selected-id="imageId"
         @select="openImage"
-        @filter-change="(s) => (statusFilter = s)"
+        @filter-change="(f) => (navFilter = f)"
         @batch-finished="reloadCurrentSuggestions"
       />
     </div>
@@ -92,6 +92,7 @@
           :selected-id="store.selectedId"
           :active-class="store.activeClass"
           :show-predictions="showPredictions"
+          :missed="store.fromErrorMark?.false_negatives.map((f) => f.bbox)"
           @select="(id) => (store.selectedId = id)"
           @change="(id, c) => store.updateBox(id, c)"
           @create="(c) => store.addBox({ ...c, class: store.activeClass, type: 'positive', source: 'manual' })"
@@ -109,6 +110,41 @@
             <template #avatar><q-icon name="fact_check" color="warning" /></template>
             Noch nicht geprüft auf: <b>{{ missingClasses.map((c) => classes.info(c).label).join(', ') }}</b>.
             Bild auf diese Klassen prüfen und speichern – erst dann wird es für Trainings mit diesen Klassen verwendet.
+          </q-banner>
+          <q-banner v-if="store.image?.duplicate_of" dense rounded class="bg-amber-soft text-body2 q-mb-sm">
+            <template #avatar><q-icon name="content_copy" color="warning" /></template>
+            Leeres Bild, fast identisch zu <b>#{{ store.image.duplicate_of }}</b> – wird nicht fürs Training verwendet.
+            Annotieren lohnt sich nur, wenn doch ein Objekt zu sehen ist (dann entfällt die Markierung).<HelpIcon term="duplicates" inline />
+            <template #action>
+              <q-btn dense flat no-caps size="sm" label="Original öffnen" @click="openImage(store.image.duplicate_of)" />
+              <q-btn dense flat no-caps size="sm" label="Duplikate-Seite" to="/duplicates" />
+            </template>
+          </q-banner>
+          <q-banner v-if="store.fromErrorMark" dense rounded class="bg-negative-soft text-body2 q-mb-sm">
+            <template #avatar><q-icon name="report_problem" color="negative" /></template>
+            <div>
+              Fehleranalyse<span v-if="store.fromErrorMark.batch_id"> #{{ store.fromErrorMark.batch_id }}</span>
+              ({{ store.fromErrorMark.model_version }}, {{ store.fromErrorMark.input_width }}×{{ store.fromErrorMark.input_height }},
+              ≥ {{ store.fromErrorMark.confidence }}): {{ store.fromErrorMark.true_positives }} richtig erkannt<HelpIcon term="errorAnalysis" inline />
+            </div>
+            <div v-if="store.fromErrorMark.false_positives.length">
+              <b>{{ store.fromErrorMark.false_positives.length }} Fehlalarm(e)</b> (gestrichelt): ist das Objekt wirklich da, fehlt die Annotation
+              → übernehmen; sonst → als Hard Negative markieren.
+              <span v-if="store.fromErrorMark.false_positives.length > store.predictions.length">
+                {{ store.fromErrorMark.false_positives.length - store.predictions.length }} davon liegen auf einer vorhandenen Box
+                (Doppelerkennung oder schon als Hard Negative markiert) und werden nicht angezeigt.
+              </span>
+            </div>
+            <div v-if="store.fromErrorMark.false_negatives.length">
+              <b>{{ store.fromErrorMark.false_negatives.length }} nicht erkannt</b> (rot umrandet): Box prüfen (Klasse, Lage, zu eng/weit?).
+              Stimmt sie, ist es ein schwieriger Fall – ähnliche Bilder fürs Training sammeln.
+            </div>
+            <div class="text-caption q-mt-xs">Speichern entfernt die Markierung.</div>
+            <template #action>
+              <q-btn dense flat no-caps size="sm" label="Markierung entfernen" :disable="store.dirty" @click="dismissErrorMark">
+                <q-tooltip>Annotation ist korrekt, das Modell liegt falsch: Bild aus dem Filter „Fehlerbilder“ nehmen</q-tooltip>
+              </q-btn>
+            </template>
           </q-banner>
           <div class="text-subtitle2 q-mb-xs">Annotationen ({{ positives.length }})</div>
           <div v-if="store.image && !positives.length" class="text-caption text-muted q-mb-sm">
@@ -128,7 +164,7 @@
               </q-item-section>
               <q-item-section>
                 <q-item-label>{{ i + 1 }}. {{ classes.info(b.class).label }}<span v-if="b.source === 'prediction'" class="text-muted"> (übernommen)</span></q-item-label>
-                <q-item-label caption class="mono">
+                <q-item-label v-if="ui.advanced" caption class="mono">
                   {{ Math.round(b.x1) }},{{ Math.round(b.y1) }} – {{ Math.round(b.x2) }},{{ Math.round(b.y2) }}
                 </q-item-label>
               </q-item-section>
@@ -172,10 +208,16 @@
 
           <div class="text-subtitle2 q-mb-sm">Modell testen<HelpIcon term="predictions" inline /></div>
           <div class="column q-gutter-sm">
-            <ModelSelector v-model="test.model" />
-            <q-select v-model="test.inputSize" :options="models.inputSizes" dense outlined label="Eingangsauflösung">
-              <template #append><HelpIcon term="resolution" /></template>
-            </q-select>
+            <template v-if="ui.advanced">
+              <ModelSelector v-model="test.model" />
+              <q-select v-model="test.inputSize" :options="models.inputSizes" dense outlined label="Eingangsauflösung">
+                <template #append><HelpIcon term="resolution" /></template>
+              </q-select>
+            </template>
+            <div v-else class="text-caption text-muted">
+              Production-Modell {{ models.production?.version ?? '–' }} · {{ models.defaultInputSize.replace('x', '×') }}
+              <HelpIcon term="resolution" inline />
+            </div>
             <div>
               <div class="text-caption">Confidence-Threshold: {{ test.confidence.toFixed(2) }}<HelpIcon term="confidence" inline /></div>
               <q-slider v-model="test.confidence" :min="0.05" :max="0.95" :step="0.05" dense />
@@ -184,15 +226,21 @@
           </div>
 
           <template v-if="store.lastDetection">
-            <q-banner v-if="store.fromSuggestion" dense rounded class="bg-violet-soft text-body2 q-mt-sm">
-              <template #avatar><q-icon name="playlist_add_check" color="secondary" /></template>
-              Vorschläge aus Batch-Test #{{ store.fromSuggestion.batch_id }} ({{ store.fromSuggestion.model_version }},
-              {{ store.fromSuggestion.input_width }}×{{ store.fromSuggestion.input_height }}, ≥ {{ store.fromSuggestion.confidence }}).
-              <span v-if="store.fromSuggestion.detections.length > store.predictions.length">
-                {{ store.fromSuggestion.detections.length - store.predictions.length }} bereits annotiert/übernommen.
+            <div v-if="store.fromSuggestion" class="row items-center no-wrap q-mt-sm q-px-sm q-py-xs rounded-borders bg-violet-soft text-caption">
+              <q-icon name="playlist_add_check" color="secondary" size="16px" class="q-mr-xs" />
+              <span class="ellipsis">
+                Vorschläge aus Batch-Test #{{ store.fromSuggestion.batch_id }}
+                <template v-if="ui.advanced"> · {{ store.fromSuggestion.model_version }} · ≥ {{ store.fromSuggestion.confidence }}</template>
               </span>
-              Beim Speichern werden die restlichen Vorschläge verworfen.
-            </q-banner>
+              <q-tooltip max-width="320px">
+                {{ store.fromSuggestion.model_version }}, {{ store.fromSuggestion.input_width }}×{{ store.fromSuggestion.input_height }},
+                Confidence ≥ {{ store.fromSuggestion.confidence }}.
+                <template v-if="store.fromSuggestion.detections.length > store.predictions.length">
+                  {{ store.fromSuggestion.detections.length - store.predictions.length }} bereits annotiert/übernommen.
+                </template>
+                Beim Speichern werden die restlichen Vorschläge verworfen.
+              </q-tooltip>
+            </div>
             <div v-else class="text-caption text-muted q-mt-sm">
               {{ store.lastDetection.model.version }} ({{ store.lastDetection.model.status }}) ·
               {{ store.lastDetection.model.input_width }}×{{ store.lastDetection.model.input_height }} ·
@@ -275,6 +323,25 @@
 
           <q-separator class="q-my-md" />
           <div class="text-subtitle2 q-mb-xs">Bild</div>
+          <div v-if="store.image && ui.advanced" class="q-mb-sm">
+            <div class="text-caption q-mb-xs">Verwendung<HelpIcon term="split" inline /></div>
+            <q-btn-toggle
+              :model-value="store.image.dataset_split"
+              dense
+              no-caps
+              unelevated
+              spread
+              toggle-color="primary"
+              :options="[
+                { label: 'Training', value: 'train' },
+                { label: 'Validierung', value: 'validation' },
+              ]"
+              @update:model-value="setSplit"
+            />
+            <div v-if="!store.image.dataset_split" class="text-caption text-muted q-mt-xs">
+              Noch nicht festgelegt – wird beim ersten Speichern automatisch zugeteilt (Validierungsanteil). Jetzt wählen, um es festzulegen.
+            </div>
+          </div>
           <div class="column q-gutter-xs">
             <q-btn
               v-if="store.image?.annotation_status === 'labeled'"
@@ -314,10 +381,11 @@ import AnnotationCanvas from '@/components/AnnotationCanvas.vue'
 import HelpIcon from '@/components/HelpIcon.vue'
 import ImageBrowser from '@/components/ImageBrowser.vue'
 import ModelSelector from '@/components/ModelSelector.vue'
-import { api, errorMessage } from '@/services/api'
+import { api, errorMessage, type NavFilter } from '@/services/api'
 import { useClassesStore } from '@/stores/classes'
 import { useAnnotationStore } from '@/stores/annotation'
 import { useModelsStore } from '@/stores/models'
+import { useUiStore } from '@/stores/ui'
 
 const $q = useQuasar()
 const route = useRoute()
@@ -325,6 +393,7 @@ const router = useRouter()
 const store = useAnnotationStore()
 const models = useModelsStore()
 const classes = useClassesStore()
+const ui = useUiStore()
 
 const classOptions = computed(() =>
   classes.active.map((c) => ({ value: c.name, label: c.label, color: c.color, key: classes.shortcuts[c.name] ?? '' })),
@@ -347,7 +416,7 @@ watch(
 
 const browser = ref<InstanceType<typeof ImageBrowser> | null>(null)
 const imageId = ref<number | null>(null)
-const statusFilter = ref<string | undefined>(undefined)
+const navFilter = ref<NavFilter>({})
 const neighbours = reactive<{ previous: number | null; next: number | null }>({ previous: null, next: null })
 const showPredictions = ref(true)
 const testing = ref(false)
@@ -381,11 +450,11 @@ async function load(id: number) {
 
 async function loadNeighbours() {
   if (!imageId.value) return
-  const n = await api.neighbours(imageId.value, statusFilter.value)
+  const n = await api.neighbours(imageId.value, navFilter.value)
   neighbours.previous = n.previous
   neighbours.next = n.next
 }
-watch(statusFilter, loadNeighbours)
+watch(navFilter, loadNeighbours)
 
 function confirmDiscard(): Promise<boolean> {
   if (!store.dirty) return Promise.resolve(true)
@@ -427,7 +496,7 @@ onBeforeRouteLeave(async () => confirmDiscard())
 async function save(next: boolean) {
   if (!store.image) return
   try {
-    await store.save(true)
+    if (!(await store.save(true))) return // another save is still running
     const img = store.image
     browser.value?.patch(img)
     $q.notify({
@@ -464,13 +533,58 @@ async function runTest() {
   if (!store.image) return
   testing.value = true
   try {
-    const res = await api.detectStored(store.image.id, { model: test.model, input_size: test.inputSize, confidence: test.confidence })
+    // simple mode: always the production model at the configured resolution
+    const opts = ui.advanced
+      ? { model: test.model, input_size: test.inputSize, confidence: test.confidence }
+      : { model: 'production', input_size: models.defaultInputSize, confidence: test.confidence }
+    const res = await api.detectStored(store.image.id, opts)
     store.setDetection(res)
     showPredictions.value = true
   } catch (e) {
     $q.notify({ type: 'negative', message: errorMessage(e) })
   } finally {
     testing.value = false
+  }
+}
+
+async function dismissErrorMark() {
+  if (!store.image) return
+  try {
+    const detail = await api.deleteErrorMark(store.image.id)
+    store.load(detail)
+    browser.value?.patch(detail)
+    await loadNeighbours()
+  } catch (e) {
+    $q.notify({ type: 'negative', message: errorMessage(e) })
+  }
+}
+
+function setSplit(split: 'train' | 'validation') {
+  const img = store.image
+  if (!img || split === img.dataset_split) return
+  const apply = async () => {
+    try {
+      const detail = await api.updateImage(img.id, { dataset_split: split })
+      // keep unsaved box edits: only the split changes
+      store.image = { ...store.image!, dataset_split: detail.dataset_split }
+      browser.value?.patch(detail)
+      $q.notify({ type: 'positive', message: split === 'validation' ? 'Bild wird nur noch zum Prüfen verwendet' : 'Bild wird fürs Training verwendet', timeout: 1500 })
+    } catch (e) {
+      $q.notify({ type: 'negative', message: errorMessage(e) })
+    }
+  }
+  if (split === 'validation' && img.dataset_split === 'train' && img.snapshot_refs > 0) {
+    $q.dialog({
+      title: 'Auf Validierung umstellen?',
+      message: `Das Bild wurde bereits in ${img.snapshot_refs} Training(s) verwendet – diese Modelle haben es gelernt. ` +
+        'Im Vergleich auf dem Validierungsset schneiden sie dadurch etwas zu gut ab (der Vergleich zeigt das an). ' +
+        'Für künftige Trainings ist das Bild ein echtes Prüfbild.',
+      cancel: { label: 'Abbrechen', flat: true },
+      ok: { label: 'Umstellen', color: 'primary' },
+      persistent: true,
+    }).onOk(apply)
+  } else {
+    apply()
   }
 }
 
@@ -511,6 +625,11 @@ function deleteImage() {
 function onKeydown(e: KeyboardEvent) {
   const t = e.target as HTMLElement | null
   if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+  // a held key repeats: shortcuts act once per press (held Ctrl+S saved twice)
+  if (e.repeat && !['Delete', 'Backspace', 'PageDown', 'PageUp'].includes(e.key)) {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') e.preventDefault()
+    return
+  }
   const ctrl = e.ctrlKey || e.metaKey
   if (ctrl && e.key.toLowerCase() === 's') {
     e.preventDefault()

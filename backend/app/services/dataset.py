@@ -8,13 +8,13 @@ from odcore.classes import active_class_names, is_reviewed_for, list_classes
 from odcore.db import Annotation, AnnotationStatus, DatasetSplit, Image
 
 
-def _labeled_rows(session: Session) -> list[tuple[int, DatasetSplit | None, list[str] | None]]:
-    return list(
-        session.execute(
-            select(Image.id, Image.dataset_split, Image.reviewed_classes)
-            .where(Image.annotation_status == AnnotationStatus.labeled, Image.deleted_at.is_(None))
-        ).all()
+def _labeled_rows(session: Session, include_duplicates: bool = True) -> list[tuple[int, DatasetSplit | None, list[str] | None]]:
+    stmt = select(Image.id, Image.dataset_split, Image.reviewed_classes).where(
+        Image.annotation_status == AnnotationStatus.labeled, Image.deleted_at.is_(None)
     )
+    if not include_duplicates:  # as the trainer: duplicate empty images are not used
+        stmt = stmt.where(Image.duplicate_of.is_(None))
+    return list(session.execute(stmt).all())
 
 
 def needs_review_ids(session: Session, class_names: list[str] | None = None) -> list[int]:
@@ -28,7 +28,7 @@ def eligibility(session: Session, class_names: list[str]) -> dict:
     usable = {"train": 0, "validation": 0}
     usable_ids = []
     needs_review = 0
-    for image_id, split, reviewed in _labeled_rows(session):
+    for image_id, split, reviewed in _labeled_rows(session, include_duplicates=False):
         if not is_reviewed_for(reviewed, class_names):
             needs_review += 1
         elif split is not None:
@@ -41,8 +41,13 @@ def eligibility(session: Session, class_names: list[str]) -> dict:
     usable_set = set(usable_ids)
     hard_negatives = sum(1 for i, kind in rows if kind == "hard_negative" and i in usable_set)
     negative = sum(1 for i in usable_ids if i not in with_boxes)
+    duplicates = session.scalar(
+        select(func.count(Image.id)).where(
+            Image.annotation_status == AnnotationStatus.labeled, Image.deleted_at.is_(None), Image.duplicate_of.is_not(None)
+        )
+    ) or 0
     return {"class_names": class_names, "usable": usable, "needs_review": needs_review, "negative": negative,
-            "hard_negatives": hard_negatives}
+            "hard_negatives": hard_negatives, "duplicates": duplicates}
 
 
 def dataset_stats(session: Session) -> dict:
@@ -74,6 +79,10 @@ def dataset_stats(session: Session) -> dict:
         "images_unlabeled": total - len(rows),
         "images_negative": sum(1 for i, *_ in rows if i not in with_boxes),
         "images_needs_review": sum(1 for _i, _s, reviewed in rows if not is_reviewed_for(reviewed, active)),
+        # empty images marked as duplicates (duplicate check), not used for training
+        "images_duplicates": session.scalar(
+            select(func.count(Image.id)).where(Image.deleted_at.is_(None), Image.duplicate_of.is_not(None))
+        ) or 0,
         "splits": splits,
         "annotations_per_class": per_class,
         "hard_negatives_per_class": hard_negatives,

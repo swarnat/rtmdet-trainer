@@ -30,6 +30,15 @@ def _validate(key: str, value: Any) -> Any:
         if not 0.0 < value <= 1.0:
             raise ValueError(f"{key} must be in (0, 1]")
         return value
+    if key == "camera_groups_use_metadata":
+        if not isinstance(value, bool):
+            raise ValueError("camera_groups_use_metadata must be true or false")
+        return value
+    if key == "duplicate_max_difference":
+        value = float(value)
+        if not 0.01 <= value <= 1.0:
+            raise ValueError("duplicate_max_difference must be in [0.01, 1]")
+        return value
     if key == "hard_negative_context_factor":
         value = float(value)
         if not 1.0 <= value <= 10.0:

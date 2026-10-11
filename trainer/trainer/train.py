@@ -21,6 +21,7 @@ from .db import session_factory, storage
 from .evaluate import compare, evaluate_detector
 from .export_onnx import RTMDetDeployWrapper, build_detector, export_onnx
 from .export_openvino import export_openvino, verify_openvino
+from .gpu import NO_GPU_HINT
 from .progress import ProgressHookFactory, RunReporter
 from .publish import Artifacts, publish_model
 from odcore.architectures import base_model_for_architecture, get_base_model
@@ -98,6 +99,13 @@ def run_training(run_id: int) -> None:
         if run.status != TrainingStatus.queued:
             log.warning("run %s has status %s, skipping", run_id, run.status.value)
             return
+        if not torch.cuda.is_available():
+            # never fall back to the CPU: a CPU training takes many hours and usually means the GPU got lost
+            run.status = TrainingStatus.failed
+            run.error = f"no GPU: {NO_GPU_HINT}"
+            run.finished_at = utcnow()
+            session.commit()
+            raise RuntimeError(f"training run {run_id}: {NO_GPU_HINT}")
         run.status = TrainingStatus.running
         run.started_at = utcnow()
         run.error = None
@@ -158,6 +166,7 @@ def run_training(run_id: int) -> None:
         from mmdet.utils import register_all_modules
 
         register_all_modules(init_default_scope=True)
+        from .rtmdet import metric  # noqa: F401  (registers DetailedCocoMetric)
         use_amp = torch.cuda.is_available()
         tp = TrainParams(
             base=base,

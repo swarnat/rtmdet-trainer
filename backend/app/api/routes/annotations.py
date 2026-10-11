@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from odcore.classes import active_class_names
+from odcore.db import Image
 
 from app.api.routes.images import get_image_or_404, to_detail
 from app.core.database import get_db
@@ -29,7 +30,10 @@ def get_annotations(image_id: int, session: Session = Depends(get_db)) -> list[A
     ),
 )
 def save_annotations(image_id: int, body: AnnotationsSave, session: Session = Depends(get_db)) -> ImageDetail:
-    image = get_image_or_404(session, image_id)
+    get_image_or_404(session, image_id)
+    # row lock: two concurrent saves of the same image (double click, held Ctrl+S) run one after the other;
+    # otherwise both delete the old boxes and both insert theirs -> every box twice
+    image = session.get(Image, image_id, with_for_update=True, populate_existing=True)
     try:
         image = replace_annotations(session, image, body.annotations, body.mark_labeled)
     except AnnotationValidationError as exc:

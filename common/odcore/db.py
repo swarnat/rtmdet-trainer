@@ -14,13 +14,14 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     func,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, deferred, mapped_column, relationship
 
 JSONType = JSON().with_variant(JSONB(), "postgresql")
 
@@ -87,6 +88,18 @@ class Image(Base):
     # so a referenced image is only hidden when deleted (``deleted_at``); its file is removed when
     # the last snapshot referencing it is released. Kept in sync with ``snapshot_images``.
     snapshot_refs: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # Duplicate check of empty images (no annotations; labeled negative or batch test without suggestions):
+    # 128x72 grayscale of the thumbnail (computed on upload or by the first check) and the image this one
+    # is visually identical to. Duplicates are not used for training (see backend/app/services/duplicates.py).
+    fingerprint: Mapped[Optional[bytes]] = deferred(mapped_column(LargeBinary))
+    # camera identity from the file's metadata, e.g. "AXIS Q3536-LVE · B8A44F55F126" ("" = none found,
+    # None = not determined yet); see backend/app/services/camera_meta.py
+    camera_key: Mapped[Optional[str]] = mapped_column(String(128))
+    duplicate_of: Mapped[Optional[int]] = mapped_column(ForeignKey("images.id", ondelete="SET NULL"), index=True)
+    # largest block difference to ``duplicate_of`` (0 = pixel-identical, up to setting duplicate_max_difference)
+    duplicate_score: Mapped[Optional[float]] = mapped_column(Float)
+    # reviewed on the duplicates page and kept: never marked as duplicate again
+    duplicate_keep: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -96,6 +109,16 @@ class Image(Base):
     annotations: Mapped[list["Annotation"]] = relationship(
         back_populates="image", cascade="all, delete-orphan", order_by="Annotation.id"
     )
+
+
+class DeletedImage(Base):
+    """Tombstone: content hash of a deleted image. Uploading the same file again is rejected."""
+
+    __tablename__ = "deleted_images"
+
+    sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    original_filename: Mapped[Optional[str]] = mapped_column(String(512))
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now())
 
 
 class SnapshotImage(Base):
@@ -228,6 +251,8 @@ class PredictionBatch(Base):
     processed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     detections: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     failed_images: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # error analysis (scope "errors_*"): images with at least one false positive / false negative
+    marked_images: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     error: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now())
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
@@ -249,6 +274,51 @@ class ImageSuggestion(Base):
     # [{"class": ..., "confidence": ..., "bbox": {"x1", "y1", "x2", "y2"}}] in original pixels
     detections_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONType, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now())
+
+
+class ImageErrorMark(Base):
+    """Latest error analysis result for a labeled image: where a model disagrees with the annotations.
+
+    Written by a batch test with scope ``errors_*`` (one mark per image, replaced by the next
+    analysis); removed when the image is saved as labeled again, i.e. once it has been reviewed.
+    """
+
+    __tablename__ = "image_error_marks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    image_id: Mapped[int] = mapped_column(ForeignKey("images.id", ondelete="CASCADE"), nullable=False, unique=True)
+    batch_id: Mapped[Optional[int]] = mapped_column(ForeignKey("prediction_batches.id", ondelete="SET NULL"), index=True)
+    model_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    input_width: Mapped[int] = mapped_column(Integer, nullable=False)
+    input_height: Mapped[int] = mapped_column(Integer, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    true_positives: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # detections without a matching annotation: [{"class", "confidence", "bbox": {x1, y1, x2, y2}}]
+    false_positives_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONType, nullable=False)
+    # annotations the model missed: [{"class", "bbox": {x1, y1, x2, y2}}]
+    false_negatives_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONType, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now())
+
+
+class ModelBenchmark(Base):
+    """All model versions evaluated on the *current* validation set with the same protocol (comparable values)."""
+
+    __tablename__ = "model_benchmarks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    status: Mapped[BatchStatus] = mapped_column(_enum(BatchStatus, "batch_status"), nullable=False, default=BatchStatus.queued)
+    class_names: Mapped[Optional[list[str]]] = mapped_column(JSONType)
+    num_images: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    num_boxes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    num_hard_negatives: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    processed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # {version: metrics as in the training evaluation (+ status, input size) | {"error": ...}}
+    results_json: Mapped[dict[str, Any]] = mapped_column(JSONType, nullable=False, default=dict)
+    error: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now())
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
 
 class DetectionClass(Base):

@@ -9,6 +9,8 @@
         <q-tabs inline-label shrink no-caps indicator-color="transparent" active-class="app-tab--active" class="app-tabs">
           <q-route-tab to="/" exact label="Dashboard" />
           <q-route-tab :to="{ name: 'annotate' }" label="Annotation" />
+          <q-route-tab to="/review" label="Sichtung" />
+          <q-route-tab to="/duplicates" label="Duplikate" />
           <q-route-tab to="/training" label="Training" />
           <q-route-tab to="/models" label="Modelle" />
           <q-route-tab to="/classes" label="Klassen" />
@@ -16,6 +18,24 @@
           <q-route-tab to="/settings" label="Einstellungen" />
         </q-tabs>
         <q-space />
+        <q-btn-toggle
+          v-model="ui.mode"
+          dense
+          no-caps
+          unelevated
+          rounded
+          size="sm"
+          toggle-color="primary"
+          color="transparent"
+          text-color="grey-5"
+          class="q-mr-sm mode-toggle"
+          :options="[
+            { label: 'Einfach', value: 'simple' },
+            { label: 'Erweitert', value: 'advanced' },
+          ]"
+        >
+          <q-tooltip>Erweitert zeigt zusätzliche Einstellungen, die man selten ändert (Modellwahl, Auflösung, Split, Koordinaten …)</q-tooltip>
+        </q-btn-toggle>
         <q-chip v-if="models.production" dense outline color="positive" icon="verified">
           Production: {{ models.production.version }}
         </q-chip>
@@ -35,8 +55,10 @@
 import { onMounted } from 'vue'
 import { useClassesStore } from '@/stores/classes'
 import { useModelsStore } from '@/stores/models'
+import { useUiStore } from '@/stores/ui'
 
 const models = useModelsStore()
+const ui = useUiStore()
 const classes = useClassesStore()
 onMounted(() => {
   models.refresh()
@@ -45,6 +67,9 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.mode-toggle {
+  border: 1px solid var(--app-border);
+}
 .app-header {
   background: var(--app-bg);
   color: var(--app-text);

@@ -97,6 +97,8 @@ def test_hard_negative_regression_counts_same_class_overlaps():
     assert res["overall"] == {"total": 3, "still_detected": 1, "fp_rate": 1 / 3}
     assert res["per_class"]["person"]["fp_rate"] == 0.5
     assert res["validation_only"] == {"total": 1, "still_detected": 0, "fp_rate": 0.0}
+    # per-class buckets restricted to validation images (fair basis for the model comparison)
+    assert res["per_class_validation"] == {"person": {"total": 1, "still_detected": 0, "fp_rate": 0.0}}
 
 
 def test_remap_by_class_name():
@@ -105,12 +107,32 @@ def test_remap_by_class_name():
     assert [(d.class_id, d.confidence) for d in out[1]] == [(1, 0.9)]
 
 
+def _metrics(recall, rate, train_rate=None, boxes=100):
+    tp = round(recall * boxes)
+    return {"overall": {},
+            "per_class": {"person": {"precision": 0.8, "recall": recall, "mAP50": 0.7, "mAP50-95": 0.4, "tp": tp, "fp": 0, "fn": boxes - tp}},
+            "hard_negatives": {
+                "per_class": {"person": {"total": 20, "still_detected": 0, "fp_rate": train_rate if train_rate is not None else rate}},
+                "per_class_validation": {"person": {"total": 10, "still_detected": int(rate * 10), "fp_rate": rate}},
+            }}
+
+
 def test_compare_warns_when_fewer_false_alarms_cost_recall():
-    def metrics(recall, rate):
-        return {"overall": {}, "per_class": {"person": {"precision": 0.8, "recall": recall, "mAP50": 0.7, "mAP50-95": 0.4}},
-                "hard_negatives": {"per_class": {"person": {"total": 10, "still_detected": int(rate * 10), "fp_rate": rate}}}}
-    cmp = compare(metrics(0.70, 0.1), metrics(0.80, 0.5), "model-0001")
+    cmp = compare(_metrics(0.70, 0.1), _metrics(0.80, 0.5), "model-0001")
     d = cmp["delta_per_class"]["person"]
     assert d["recall"] == pytest.approx(-0.10) and d["hard_negative_fp_rate"] == pytest.approx(-0.4)
     assert cmp["warnings"] and "fewer known false positives" in cmp["warnings"][0]
-    assert compare(metrics(0.80, 0.1), metrics(0.80, 0.5), "model-0001")["warnings"] == []
+    assert "only" not in cmp["warnings"][0]
+    assert compare(_metrics(0.80, 0.1), _metrics(0.80, 0.5), "model-0001")["warnings"] == []
+
+
+def test_compare_uses_validation_hard_negatives_only():
+    # the new model "knows" its training hard negatives (rate 0 vs 0.8), on validation images both are equal
+    cmp = compare(_metrics(0.8, 0.3, train_rate=0.0), _metrics(0.8, 0.3, train_rate=0.8), "model-0001")
+    assert cmp["delta_per_class"]["person"]["hard_negative_fp_rate"] == pytest.approx(0.0)
+    assert cmp["hard_negative_basis"] == "validation"
+
+
+def test_compare_marks_warnings_on_few_boxes():
+    cmp = compare(_metrics(4 / 6, 0.1, boxes=6), _metrics(5 / 6, 0.1, boxes=6), "model-0001")
+    assert cmp["warnings"] == ["person: recall dropped by 16.7% (only 6 validation boxes)"]

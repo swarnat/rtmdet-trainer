@@ -125,8 +125,9 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    # Redis reachable and GPU usable (status also published in Redis for the API, see trainer/trainer/gpu.py)
     healthcheck:
-      test: ["CMD", "python", "-c", "import os,sys; from redis import Redis; Redis.from_url(os.environ['REDIS_URL']).ping()"]
+      test: ["CMD", "python", "-m", "trainer.gpu"]
       interval: 30s
       timeout: 10s
       start_period: 60s

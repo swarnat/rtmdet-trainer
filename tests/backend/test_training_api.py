@@ -11,7 +11,11 @@ from app.main import app
 
 
 @pytest.fixture()
-def client(session_factory):
+def client(session_factory, monkeypatch):
+    from app.core import queue
+
+    monkeypatch.setattr(queue, "trainer_gpu_status", lambda: None)  # no Redis in tests
+
     def db():
         session = session_factory()
         try:
@@ -83,3 +87,22 @@ def test_base_model_options(client, session_factory):
     assert client.put("/api/v1/settings", json={"values": {"default_base_model": "rtmdet-xl-coco"}}).status_code == 422
     res = client.put("/api/v1/settings", json={"values": {"default_base_model": "rtmdet-m-coco"}})
     assert res.json()["values"]["default_base_model"] == "rtmdet-m-coco"
+
+
+def test_training_is_rejected_when_trainer_has_no_gpu(client, monkeypatch):
+    from app.core import queue
+
+    monkeypatch.setattr(queue, "trainer_gpu_status", lambda: {"available": False, "error": "GPU access blocked by the operating system"})
+    res = client.post("/api/v1/training/runs", json={})
+    assert res.status_code == 409
+    assert "no usable GPU" in res.json()["detail"] and "GPU access blocked" in res.json()["detail"]
+    assert client.get("/api/v1/training/gpu").json()["status"]["available"] is False
+
+
+def test_unknown_gpu_status_does_not_block(client, monkeypatch):
+    from app.core import queue
+
+    monkeypatch.setattr(queue, "trainer_gpu_status", lambda: None)
+    # passes the GPU check and fails later for a different reason (no labeled images)
+    res = client.post("/api/v1/training/runs", json={})
+    assert res.status_code == 409 and "GPU" not in res.json()["detail"]

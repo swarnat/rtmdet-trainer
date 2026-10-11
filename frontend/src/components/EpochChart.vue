@@ -1,13 +1,36 @@
 <template>
   <div ref="container" class="epoch-chart">
-    <div class="legend row items-center q-gutter-x-md text-caption">
-      <span v-for="s in series" :key="s.key" class="row items-center no-wrap">
-        <span class="legend-line" :style="{ background: s.color }" />{{ s.label }}<HelpIcon :term="s.help" inline />
+    <div class="legend row items-center q-gutter-x-md q-gutter-y-xs text-caption">
+      <q-btn-toggle
+        v-model="metric"
+        dense
+        no-caps
+        unelevated
+        size="sm"
+        toggle-color="primary"
+        :options="[
+          { label: 'mAP50', value: 'mAP50' },
+          { label: 'mAP50-95', value: 'mAP50-95' },
+        ]"
+      />
+      <HelpIcon :term="metric === 'mAP50' ? 'mAP50' : 'mAP5095'" inline />
+      <span
+        v-for="s in series"
+        :key="s.key"
+        class="legend-item row items-center no-wrap cursor-pointer"
+        :class="{ 'legend-off': hidden.has(s.key) }"
+        @click="toggle(s.key)"
+      >
+        <svg width="18" height="6" class="q-mr-xs"><line x1="1" y1="3" x2="17" y2="3" :stroke="s.color" stroke-width="3" :stroke-dasharray="s.dash" /></svg>{{ s.label }}
+        <q-tooltip>{{ hidden.has(s.key) ? 'einblenden' : 'ausblenden' }}</q-tooltip>
       </span>
       <q-space />
       <span v-for="b in bands" :key="b.label" class="row items-center no-wrap text-muted">
         <span class="legend-band" :style="{ background: b.swatch }" />{{ b.label }}
       </span>
+    </div>
+    <div v-if="points.length && !hasDetail" class="text-caption text-muted q-mb-xs">
+      Einzelwerte je Klasse und Boxgröße gibt es erst für Trainings, die nach dieser Erweiterung gestartet wurden.
     </div>
     <svg v-if="width > 0" :width="width" :height="HEIGHT" @mousemove="onMove" @mouseleave="hoverIndex = null">
       <!-- quality bands (background) -->
@@ -21,10 +44,10 @@
       <text v-for="e in xTicks" :key="e" :x="x(e)" :y="M.t + plotH + 18" class="tick" text-anchor="middle">{{ e }}</text>
       <text :x="M.l + plotW" :y="HEIGHT - 2" class="tick" text-anchor="end">Epoch</text>
       <!-- series -->
-      <g v-for="s in series" :key="s.key">
-        <path :d="linePath(s.key)" :stroke="s.color" class="line" />
+      <g v-for="s in visibleSeries" :key="s.key">
+        <path :d="linePath(s)" :stroke="s.color" :stroke-dasharray="s.dash" :stroke-width="s.width" class="line" />
         <circle
-          v-for="p in pointsOf(s.key)"
+          v-for="p in pointsOf(s)"
           v-show="points.length <= 60 || hoverIndex === p.i"
           :key="p.i"
           :cx="p.x"
@@ -41,32 +64,80 @@
       </text>
     </svg>
     <div v-if="hover" class="chart-tooltip text-caption" :style="tooltipStyle">
-      <div class="text-weight-medium q-mb-xs">Epoch {{ hover.epoch }}</div>
-      <div v-for="s in series" :key="s.key" class="row items-center no-wrap">
-        <span class="legend-line" :style="{ background: s.color }" />
+      <div class="text-weight-medium q-mb-xs">Epoch {{ hover.epoch }} · {{ metric }}</div>
+      <div v-for="s in visibleSeries" :key="s.key" class="row items-center no-wrap">
+        <svg width="18" height="6" class="q-mr-xs"><line x1="1" y1="3" x2="17" y2="3" :stroke="s.color" stroke-width="3" :stroke-dasharray="s.dash" /></svg>
         <span class="text-muted q-mr-sm">{{ s.label }}</span>
         <q-space />
-        <span class="text-weight-medium">{{ fmt(hover[s.key]) }}</span>
+        <span class="text-weight-medium">{{ fmt(valueOf(hover, s)) }}</span>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import HelpIcon from './HelpIcon.vue'
+import type { ValHistoryEntry, ValMaps } from '@/services/api'
+import { useClassesStore } from '@/stores/classes'
 
 /** mAP values per validated epoch (0..1), e.g. TrainingRun.progress_json.val_history */
 const props = defineProps<{
-  history: { epoch: number; bbox_mAP?: number; bbox_mAP_50?: number }[]
+  history: ValHistoryEntry[]
   maxEpochs?: number
 }>()
+const classes = useClassesStore()
 
-type Key = 'bbox_mAP_50' | 'bbox_mAP'
-const series: { key: Key; label: string; color: string; help: 'mAP50' | 'mAP5095' }[] = [
-  { key: 'bbox_mAP_50', label: 'mAP50', color: '#06b6d4', help: 'mAP50' },
-  { key: 'bbox_mAP', label: 'mAP50-95', color: '#a78bfa', help: 'mAP5095' },
+type Metric = keyof ValMaps
+interface Series {
+  key: string
+  label: string
+  color: string
+  dash?: string
+  width: number
+  value: (e: ValHistoryEntry, m: Metric) => number | undefined
+}
+
+const metric = ref<Metric>('mAP50')
+const hidden = reactive(new Set<string>())
+
+const SIZES = [
+  { key: 'small', label: 'klein', color: '#f472b6' },
+  { key: 'medium', label: 'mittel', color: '#facc15' },
+  { key: 'large', label: 'groß', color: '#94a3b8' },
 ]
+
+const hasDetail = computed(() => props.history.some((e) => e.per_class || e.per_size))
+
+/** overall (MMDetection), one line per class, one dashed line per box size (only those present in the history) */
+const series = computed<Series[]>(() => {
+  const out: Series[] = [
+    {
+      key: 'overall', label: 'Gesamt', color: '#e5e7eb', width: 3,
+      value: (e, m) => (m === 'mAP50' ? e.bbox_mAP_50 : e.bbox_mAP),
+    },
+  ]
+  const classNames = [...new Set(props.history.flatMap((e) => Object.keys(e.per_class ?? {})))]
+  for (const name of classNames) {
+    const info = classes.info(name)
+    out.push({ key: `class:${name}`, label: info.label, color: info.color, width: 2, value: (e, m) => e.per_class?.[name]?.[m] })
+  }
+  for (const s of SIZES) {
+    if (!props.history.some((e) => e.per_size?.[s.key])) continue
+    out.push({ key: `size:${s.key}`, label: `Boxen ${s.label}`, color: s.color, dash: '6 4', width: 2, value: (e, m) => e.per_size?.[s.key]?.[m] })
+  }
+  return out
+})
+const visibleSeries = computed(() => series.value.filter((s) => !hidden.has(s.key)))
+
+function toggle(key: string) {
+  if (hidden.has(key)) hidden.delete(key)
+  else hidden.add(key)
+}
+
+function valueOf(e: ValHistoryEntry, s: Series) {
+  return s.value(e, metric.value)
+}
 const bands = [
   { from: 0, to: 60, label: '0–60 %', fill: 'rgba(251, 113, 133, 0.18)', swatch: 'rgba(251, 113, 133, 0.7)' },
   { from: 60, to: 80, label: '61–80 %', fill: 'rgba(251, 146, 60, 0.20)', swatch: 'rgba(251, 146, 60, 0.75)' },
@@ -90,11 +161,14 @@ function x(epoch: number) {
 function y(pct: number) {
   return M.t + (1 - pct / 100) * plotH
 }
-function pointsOf(key: Key) {
-  return points.value.flatMap((p, i) => (p[key] == null ? [] : [{ i, x: x(p.epoch), y: y(p[key]! * 100) }]))
+function pointsOf(s: Series) {
+  return points.value.flatMap((p, i) => {
+    const v = valueOf(p, s)
+    return v == null ? [] : [{ i, x: x(p.epoch), y: y(v * 100) }]
+  })
 }
-function linePath(key: Key) {
-  return pointsOf(key)
+function linePath(s: Series) {
+  return pointsOf(s)
     .map((p, n) => `${n ? 'L' : 'M'}${p.x.toFixed(1)},${p.y.toFixed(1)}`)
     .join('')
 }
@@ -110,7 +184,7 @@ const hover = computed(() => (hoverIndex.value == null ? null : points.value[hov
 const tooltipStyle = computed(() => {
   if (!hover.value) return {}
   const px = x(hover.value.epoch)
-  const left = px > width.value - 190 ? px - 182 : px + 12
+  const left = px > width.value - 210 ? px - 202 : px + 12
   return { left: `${left}px`, top: `${M.t + 28}px` }
 })
 
@@ -143,12 +217,12 @@ onBeforeUnmount(() => observer?.disconnect())
 .legend {
   margin: 4px 0 8px;
 }
-.legend-line {
-  display: inline-block;
-  width: 14px;
-  height: 3px;
-  border-radius: 2px;
-  margin-right: 6px;
+.legend-item {
+  user-select: none;
+}
+.legend-off {
+  opacity: 0.35;
+  text-decoration: line-through;
 }
 .legend-band {
   display: inline-block;
@@ -170,7 +244,6 @@ svg {
 }
 .line {
   fill: none;
-  stroke-width: 2;
   stroke-linejoin: round;
   stroke-linecap: round;
 }
@@ -185,7 +258,7 @@ svg {
 }
 .chart-tooltip {
   position: absolute;
-  min-width: 170px;
+  min-width: 190px;
   pointer-events: none;
   background: #1e293b;
   border: 1px solid var(--app-border-strong);

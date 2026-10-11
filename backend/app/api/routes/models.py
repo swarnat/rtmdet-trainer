@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import StreamingResponse
@@ -9,15 +10,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from odcore.architectures import BASE_MODELS, get_base_model
-from odcore.db import TrainingRun
+from odcore.db import BatchStatus, ModelBenchmark, TrainingRun
 from odcore.snapshots import release_snapshot
 from odcore.storage import ObjectStorage
 
 from app.core.database import get_db
-from app.core.queue import enqueue_bootstrap
+from app.core.queue import enqueue_benchmark, enqueue_bootstrap
 from app.core.s3 import get_storage
 from app.db.repositories import models as repo
-from app.schemas.model import ModelVersionOut, ModelVersionUpdate
+from app.schemas.model import BenchmarkOut, ModelVersionOut, ModelVersionUpdate
 from app.services.model_registry import ModelNotFoundError, ModelRegistry, get_registry, resolve_model
 
 log = logging.getLogger(__name__)
@@ -76,6 +77,45 @@ def bootstrap(force: bool = False, base_model: str = "rtmdet-s-coco") -> dict:
         return {"job_id": enqueue_bootstrap(force, base_model)}
     except Exception as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"job queue unavailable: {exc}") from exc
+
+
+def benchmark_out(b: ModelBenchmark) -> BenchmarkOut:
+    out = BenchmarkOut.model_validate(b)
+    out.status = b.status.value
+    return out
+
+
+@router.post(
+    "/benchmarks",
+    response_model=BenchmarkOut,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Evaluate all model versions on the current validation set",
+    description="Runs in the trainer (queued behind trainings). Same protocol as the training evaluation, each model "
+    "at its own input size; results are comparable between models, unlike the metrics stored at training time.",
+)
+def start_benchmark(session: Session = Depends(get_db)) -> BenchmarkOut:
+    active = session.execute(
+        select(ModelBenchmark.id).where(ModelBenchmark.status.in_([BatchStatus.queued, BatchStatus.running]))
+    ).first()
+    if active is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"benchmark #{active[0]} is still running")
+    b = ModelBenchmark(status=BatchStatus.queued, results_json={})
+    session.add(b)
+    session.commit()
+    try:
+        enqueue_benchmark(b.id)
+    except Exception as exc:
+        b.status, b.error = BatchStatus.failed, f"could not queue the job: {exc}"
+        session.commit()
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, b.error) from exc
+    session.refresh(b)
+    return benchmark_out(b)
+
+
+@router.get("/benchmarks/latest", response_model=Optional[BenchmarkOut], summary="Most recent benchmark (null if none)")
+def latest_benchmark(session: Session = Depends(get_db)) -> Optional[BenchmarkOut]:
+    b = session.execute(select(ModelBenchmark).order_by(ModelBenchmark.id.desc()).limit(1)).scalars().first()
+    return benchmark_out(b) if b else None
 
 
 @router.get("/{version}", response_model=ModelVersionOut, summary="Model version details")

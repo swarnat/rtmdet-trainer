@@ -33,6 +33,8 @@ export const useAnnotationStore = defineStore('annotation', () => {
   const lastDetection = ref<DetectResponse | null>(null)
   /** predictions shown come from a stored batch-test suggestion (not a live test) */
   const fromSuggestion = ref<ImageDetail['suggestion']>(null)
+  /** predictions shown are the false positives of an error analysis; its false negatives are highlighted */
+  const fromErrorMark = ref<ImageDetail['error_mark']>(null)
   const selectedId = ref<string | null>(null)
   const activeClass = ref<ClassName>('')
   const dirty = ref(false)
@@ -64,10 +66,27 @@ export const useAnnotationStore = defineStore('annotation', () => {
     predictions.value = []
     lastDetection.value = null
     fromSuggestion.value = null
+    fromErrorMark.value = null
     selectedId.value = null
     history.value = []
     dirty.value = false
-    if (detail.suggestion) loadSuggestion(detail)
+    if (detail.error_mark) loadErrorMark(detail)
+    else if (detail.suggestion) loadSuggestion(detail)
+  }
+
+  /** Show the false positives of an error analysis as predictions (accept = missing annotation, N = hard negative),
+   *  minus those already covered by a box (positive or hard negative) of the same class. */
+  function loadErrorMark(detail: ImageDetail) {
+    const m = detail.error_mark!
+    setDetection({
+      image: { width: detail.width, height: detail.height },
+      model: { version: m.model_version, status: 'analysis', input_width: m.input_width, input_height: m.input_height },
+      inference_ms: 0,
+      detections: m.false_positives.filter(
+        (d) => !boxes.value.some((b) => b.class === d.class && iou(b, d.bbox) >= 0.5),
+      ),
+    })
+    fromErrorMark.value = m
   }
 
   /** Show batch-test suggestions as predictions, minus those already covered by a box of the same class. */
@@ -148,6 +167,7 @@ export const useAnnotationStore = defineStore('annotation', () => {
   function setDetection(res: DetectResponse) {
     lastDetection.value = res
     fromSuggestion.value = null
+    fromErrorMark.value = null
     predictions.value = res.detections.map((d) => ({
       uid: uid('p'),
       class: d.class,
@@ -205,10 +225,12 @@ export const useAnnotationStore = defineStore('annotation', () => {
     predictions.value = []
     lastDetection.value = null
     fromSuggestion.value = null
+    fromErrorMark.value = null
   }
 
   async function save(markLabeled = true) {
-    if (!image.value) return
+    // a save is already running (double click, held Ctrl+S): ignore, the running one stores the same boxes
+    if (!image.value || saving.value) return false
     saving.value = true
     try {
       const detail = await api.saveAnnotations(
@@ -229,17 +251,20 @@ export const useAnnotationStore = defineStore('annotation', () => {
       const preds = predictions.value
       const det = lastDetection.value
       const sug = fromSuggestion.value
+      const mark = fromErrorMark.value
       load(detail)
       predictions.value = preds
       lastDetection.value = det
       fromSuggestion.value = sug
+      fromErrorMark.value = mark
+      return true
     } finally {
       saving.value = false
     }
   }
 
   return {
-    image, boxes, predictions, lastDetection, fromSuggestion, selectedId, activeClass, dirty, saving, history,
+    image, boxes, predictions, lastDetection, fromSuggestion, fromErrorMark, selectedId, activeClass, dirty, saving, history,
     selectedBox, selectedPrediction,
     load, addBox, updateBox, deleteSelected, setClassForSelected, undo,
     setDetection, acceptable, acceptPrediction, markHardNegative, acceptAllPredictions, clearPredictions, save,

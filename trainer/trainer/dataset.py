@@ -128,10 +128,15 @@ def create_snapshot(session: Session, s3: ObjectStorage, run_id: int, local_root
             .with_for_update(of=Image)
         ).scalars()
     )
-    images = [i for i in labeled if is_reviewed_for(i.reviewed_classes, class_names)]
-    excluded = len(labeled) - len(images)
+    reviewed = [i for i in labeled if is_reviewed_for(i.reviewed_classes, class_names)]
+    excluded = len(labeled) - len(reviewed)
     if excluded:
         log.warning("%d labeled images were not checked for all classes %s and are excluded", excluded, class_names)
+    # empty images marked as visually identical to another one would over-represent that scene
+    images = [i for i in reviewed if i.duplicate_of is None]
+    duplicates = len(reviewed) - len(images)
+    if duplicates:
+        log.info("%d duplicate empty images are excluded", duplicates)
     ratio = float(get_setting(session, "validation_ratio"))
     for img in images:
         if img.dataset_split is None:
@@ -160,7 +165,7 @@ def create_snapshot(session: Session, s3: ObjectStorage, run_id: int, local_root
     with ThreadPoolExecutor(max_workers=8) as pool:
         list(pool.map(download, images))
 
-    stats: dict = {"classes": list(class_names), "excluded_needs_review": excluded}
+    stats: dict = {"classes": list(class_names), "excluded_needs_review": excluded, "excluded_duplicates": duplicates}
     cocos = {split: build_coco(by_split[split], class_names) for split in SPLIT_FILES}
     for split in SPLIT_FILES:
         stats[split.value] = split_stats(cocos[split])
@@ -187,6 +192,7 @@ def create_snapshot(session: Session, s3: ObjectStorage, run_id: int, local_root
         "created_at": datetime.now(timezone.utc).isoformat(),
         "classes": list(class_names),
         "excluded_needs_review": excluded,
+        "excluded_duplicates": duplicates,
         "validation_ratio_for_new_images": ratio,
         "format": "coco-detection",
         "stats": stats,
@@ -301,7 +307,10 @@ def load_val_samples(local_dir: str) -> tuple[dict, list[dict]]:
 
 
 def current_validation_set(session: Session, s3: ObjectStorage, local_root: str, class_names: list[str]) -> str | None:
-    """Download the current labeled validation images (used to evaluate the COCO bootstrap model)."""
+    """Download the current labeled validation images (COCO bootstrap model, benchmark of all models).
+
+    Also writes ``annotations/hard_negatives.json`` with the hard negatives of these images (regression check).
+    """
     candidates = list(
         session.execute(
             select(Image)
@@ -317,6 +326,14 @@ def current_validation_set(session: Session, s3: ObjectStorage, local_root: str,
     os.makedirs(os.path.join(local_dir, "annotations"), exist_ok=True)
     with open(os.path.join(local_dir, "annotations", "val.json"), "w") as f:
         json.dump(build_coco(images, class_names), f)
+    hard_negatives = [
+        {"annotation_id": a.id, "image_id": img.id, "file_name": image_file_name(img), "split": DatasetSplit.validation.value,
+         "class": a.class_name, "bbox": [a.x1, a.y1, a.x2, a.y2], "source_model": a.source_model,
+         "source_confidence": a.source_confidence}
+        for img in images for a in img.annotations if a.type == "hard_negative" and a.class_name in class_names
+    ]
+    with open(os.path.join(local_dir, "annotations", "hard_negatives.json"), "w") as f:
+        json.dump(hard_negatives, f)
     for img in images:
         s3.download_file(s3.settings.bucket_images, img.s3_object_key, os.path.join(local_dir, "images", image_file_name(img)))
     return local_dir

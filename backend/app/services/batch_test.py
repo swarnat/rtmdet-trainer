@@ -1,5 +1,10 @@
 """Batch test: run a model over all open images and store the detections as suggestions.
 
+With an ``errors_*`` scope it is an *error analysis* instead: the model runs over
+labeled images, its detections are matched against the annotations (same rule as
+the trainer's precision/recall) and every image with false positives or false
+negatives gets an ``ImageErrorMark``. Each analysis replaces all previous marks.
+
 Runs inside the API process on a single background thread (one batch at a
 time), using the same compiled OpenVINO models as ``/detect``. Progress is
 written to ``prediction_batches``; cancelling sets the status, which the loop
@@ -14,29 +19,72 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 
+import numpy as np
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from odcore.db import AnnotationStatus, BatchStatus, Image, ImageSuggestion, PredictionBatch, utcnow
-from odcore.geometry import decode_image
+from odcore.classes import active_class_names
+from odcore.db import AnnotationStatus, BatchStatus, DatasetSplit, Image, ImageErrorMark, ImageSuggestion, PredictionBatch, utcnow
+from odcore.geometry import box_iou, decode_image
 from odcore.settings_store import get_setting
 from odcore.storage import ObjectStorage
 
+from app.db.repositories.images import last_upload_ids
 from app.services.dataset import needs_review_ids
+from app.services.duplicates import update_duplicates
 from app.services.model_registry import ModelRegistry, resolve_model
 
 log = logging.getLogger(__name__)
 
-SCOPES = ("unlabeled", "unlabeled_and_review")
+SUGGESTION_SCOPES = ("unlabeled", "unlabeled_and_review", "unlabeled_last_upload")
+# error analysis on labeled images: validation split only, or all labeled images
+ERROR_SCOPES = ("errors_validation", "errors_labeled")
+SCOPES = SUGGESTION_SCOPES + ERROR_SCOPES
+MATCH_IOU = 0.5
+
+
+def find_errors(detections: list[dict], annotations: list[dict], iou_thr: float = MATCH_IOU) -> tuple[int, list[dict], list[dict]]:
+    """Greedy one-to-one matching per class, highest confidence first (as the trainer's precision/recall).
+
+    Returns ``(true positives, false positives, false negatives)``; false positives are the
+    unmatched detections, false negatives the unmatched annotations.
+    """
+    tp, fps, fns = 0, [], []
+    for cls in sorted({d["class"] for d in detections} | {a["class"] for a in annotations}):
+        dets = sorted((d for d in detections if d["class"] == cls), key=lambda d: -d["confidence"])
+        gts = [a for a in annotations if a["class"] == cls]
+        xyxy = lambda items: np.array([[i["bbox"][k] for k in ("x1", "y1", "x2", "y2")] for i in items]).reshape(-1, 4)  # noqa: E731
+        ious = box_iou(xyxy(dets), xyxy(gts)) if dets and gts else np.zeros((len(dets), len(gts)))
+        used = np.zeros(len(gts), dtype=bool)
+        for i, d in enumerate(dets):
+            best, best_j = iou_thr, -1
+            for j in range(len(gts)):
+                if not used[j] and ious[i, j] >= best:
+                    best, best_j = ious[i, j], j
+            if best_j >= 0:
+                used[best_j] = True
+                tp += 1
+            else:
+                fps.append(d)
+        fns += [g for g, u in zip(gts, used) if not u]
+    return tp, fps, fns
 
 
 def select_image_ids(session: Session, scope: str) -> list[int]:
+    if scope in ERROR_SCOPES:
+        stmt = select(Image.id).where(Image.annotation_status == AnnotationStatus.labeled, Image.deleted_at.is_(None))
+        if scope == "errors_validation":
+            stmt = stmt.where(Image.dataset_split == DatasetSplit.validation)
+        return list(session.execute(stmt.order_by(Image.id)).scalars())
     ids = list(
         session.execute(
             select(Image.id).where(Image.annotation_status == AnnotationStatus.unlabeled, Image.deleted_at.is_(None))
             .order_by(Image.id)
         ).scalars()
     )
+    if scope == "unlabeled_last_upload":
+        recent = set(last_upload_ids(session))
+        return [i for i in ids if i in recent]
     if scope == "unlabeled_and_review":
         ids += needs_review_ids(session)
     return sorted(set(ids))
@@ -52,6 +100,7 @@ def run_batch(batch_id: int, session_factory: sessionmaker[Session], storage: Ob
             ref = resolve_model(session, batch.model_ref)
             iou = float(get_setting(session, "nms_iou_threshold"))
             image_ids = select_image_ids(session, batch.scope)
+            active = set(active_class_names(session))
         except Exception as exc:
             batch.status, batch.error, batch.finished_at = BatchStatus.failed, str(exc), utcnow()
             session.commit()
@@ -60,6 +109,9 @@ def run_batch(batch_id: int, session_factory: sessionmaker[Session], storage: Ob
         batch.model_version = ref.version
         batch.total = len(image_ids)
         batch.started_at = utcnow()
+        analysis = batch.scope in ERROR_SCOPES
+        if analysis:
+            session.execute(delete(ImageErrorMark))  # marks always describe the latest analysis
         session.commit()
         width, height, conf = batch.input_width, batch.input_height, batch.confidence
     log.info("batch test #%d: %s on %d images", batch_id, ref.version, len(image_ids))
@@ -74,7 +126,7 @@ def run_batch(batch_id: int, session_factory: sessionmaker[Session], storage: Ob
             session.commit()
         return
 
-    processed = detections = failed = 0
+    processed = detections = failed = marked = 0
     for image_id in image_ids:
         with session_factory() as session:
             batch = session.get(PredictionBatch, batch_id)
@@ -94,18 +146,25 @@ def run_batch(batch_id: int, session_factory: sessionmaker[Session], storage: Ob
                         }
                         for d in result.detections
                     ]
-                    session.execute(delete(ImageSuggestion).where(ImageSuggestion.image_id == image_id))
-                    session.add(ImageSuggestion(
-                        image_id=image_id, batch_id=batch_id, model_version=ref.version, input_width=width,
-                        input_height=height, confidence=conf, detections_json=dets,
-                    ))
-                    detections += len(dets)
+                    if analysis:
+                        n = _store_error_mark(session, image, dets, ref.class_names, active, batch_id, ref.version, width, height, conf)
+                        detections += n
+                        if n:
+                            marked += 1
+                    else:
+                        session.execute(delete(ImageSuggestion).where(ImageSuggestion.image_id == image_id))
+                        session.add(ImageSuggestion(
+                            image_id=image_id, batch_id=batch_id, model_version=ref.version, input_width=width,
+                            input_height=height, confidence=conf, detections_json=dets,
+                        ))
+                        detections += len(dets)
                 except Exception as exc:  # one broken image must not stop the batch
                     log.warning("batch test #%d: image %d failed: %s", batch_id, image_id, exc)
                     failed += 1
                     batch.error = f"image {image_id}: {exc}"
             processed += 1
             batch.processed, batch.detections, batch.failed_images = processed, detections, failed
+            batch.marked_images = marked
             session.commit()
 
     with session_factory() as session:
@@ -115,6 +174,35 @@ def run_batch(batch_id: int, session_factory: sessionmaker[Session], storage: Ob
             batch.finished_at = utcnow()
             session.commit()
     log.info("batch test #%d done: %d images, %d suggestions, %d failed", batch_id, processed, detections, failed)
+    if not analysis:
+        # open images without suggestions are now known to be empty: check them for duplicates
+        try:
+            with session_factory() as session:
+                update_duplicates(session, storage)
+        except Exception:
+            log.exception("duplicate check after batch test #%d failed", batch_id)
+
+
+def _store_error_mark(session: Session, image: Image, dets: list[dict], model_classes: tuple[str, ...], active: set[str],
+                      batch_id: int, version: str, width: int, height: int, conf: float) -> int:
+    """Compare detections with the annotations; store a mark if they disagree. Returns the number of errors.
+
+    Only classes the model knows, that are active and that the image was reviewed for are compared
+    (an image not yet checked for a class may contain unlabeled objects of it).
+    """
+    classes = set(model_classes) & active & set(image.reviewed_classes or ())
+    gts = [
+        {"class": a.class_name, "bbox": {"x1": a.x1, "y1": a.y1, "x2": a.x2, "y2": a.y2}}
+        for a in image.annotations if a.type == "positive" and a.class_name in classes
+    ]
+    tp, fps, fns = find_errors([d for d in dets if d["class"] in classes], gts)
+    session.execute(delete(ImageErrorMark).where(ImageErrorMark.image_id == image.id))
+    if fps or fns:
+        session.add(ImageErrorMark(
+            image_id=image.id, batch_id=batch_id, model_version=version, input_width=width, input_height=height,
+            confidence=conf, true_positives=tp, false_positives_json=fps, false_negatives_json=fns,
+        ))
+    return len(fps) + len(fns)
 
 
 class BatchRunner:

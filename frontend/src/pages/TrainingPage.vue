@@ -11,6 +11,16 @@
               immer als <b>Candidate</b> registriert.
             </div>
           </q-card-section>
+          <q-card-section v-if="gpu && !gpu.available" class="q-pt-none">
+            <q-banner dense rounded class="bg-negative text-white">
+              <template #avatar><q-icon name="memory" /></template>
+              <div class="text-weight-medium">Keine GPU im Trainer – Training nicht möglich</div>
+              <div class="text-caption">{{ gpu.error }}</div>
+              <div class="text-caption q-mt-xs">
+                Trainer-Container neu erstellen: <span class="mono">docker compose up -d --force-recreate trainer</span>
+              </div>
+            </q-banner>
+          </q-card-section>
           <q-card-section class="column q-gutter-md">
             <q-select
               v-model="form.base_model_id"
@@ -81,10 +91,21 @@
               <span v-if="elig.needs_review" class="text-warning">
                 {{ elig.needs_review }} annotierte Bilder sind für diese Klassen noch nicht geprüft und werden ausgelassen.
               </span>
+              <span v-if="elig.duplicates"> {{ elig.duplicates }} leere Duplikate werden ausgelassen.</span>
               <span v-if="stats?.images_unlabeled"> {{ stats.images_unlabeled }} Bilder offen.</span>
               <div v-if="!elig.usable.validation" class="text-negative">Mindestens ein verwendbares Validierungsbild nötig.</div>
             </div>
-            <q-btn color="primary" icon="play_arrow" label="Training starten" :loading="starting" @click="start" />
+            <q-btn
+              color="primary"
+              icon="play_arrow"
+              label="Training starten"
+              :loading="starting"
+              :disable="gpu?.available === false"
+              @click="start"
+            />
+            <div v-if="gpu?.available" class="text-caption text-muted">
+              <q-icon name="memory" size="14px" /> GPU: {{ gpu.devices.join(', ') }}
+            </div>
           </q-card-section>
         </q-card>
       </div>
@@ -159,6 +180,9 @@
                   <b>Daten<HelpIcon :text="`${GLOSSARY.split} ${GLOSSARY.hardNegatives}`" inline />:</b>
                   train {{ selected.dataset_stats_json.train?.images }} Bilder / {{ selected.dataset_stats_json.train?.boxes }} Boxen,
                   val {{ selected.dataset_stats_json.validation?.images }} / {{ selected.dataset_stats_json.validation?.boxes }}
+                  <span v-if="selected.dataset_stats_json.excluded_duplicates">
+                    · {{ selected.dataset_stats_json.excluded_duplicates }} Duplikate ausgelassen
+                  </span>
                   <span v-if="selected.dataset_stats_json.excluded_needs_review">
                     · {{ selected.dataset_stats_json.excluded_needs_review }} ungeprüft ausgelassen
                   </span>
@@ -186,7 +210,58 @@
             <EpochChart :history="valHistory" :max-epochs="selected.epochs" />
           </q-card-section>
           <q-card-section v-if="selected.metrics_json" class="q-pt-none">
-            <div class="text-subtitle2 q-mb-xs">Metriken des exportierten Modells</div>
+            <div class="row items-center q-gutter-sm q-mb-xs">
+              <div class="text-subtitle2">Metriken des exportierten Modells</div>
+              <q-space />
+              <template v-if="selected.model_version && selected.status === 'completed'">
+                <template v-if="analysis && analysis.model_version === selected.model_version">
+                  <div v-if="analysis.status === 'queued' || analysis.status === 'running'" class="row items-center no-wrap q-gutter-x-sm" style="min-width: 220px">
+                    <span class="text-caption text-secondary">Fehleranalyse {{ analysis.processed }} / {{ analysis.total }}</span>
+                    <q-linear-progress :value="analysis.total ? analysis.processed / analysis.total : 0" color="secondary" rounded class="col" />
+                  </div>
+                  <q-btn
+                    v-else-if="analysis.status === 'completed' && analysis.marked_images"
+                    unelevated
+                    dense
+                    no-caps
+                    color="negative"
+                    icon="image_search"
+                    :label="`${analysis.marked_images} Fehlerbilder annotieren`"
+                    @click="openErrorImages"
+                  >
+                    <q-tooltip>{{ analysis.marked_images }} von {{ analysis.processed }} Bildern mit Fehlalarmen oder übersehenen Objekten</q-tooltip>
+                  </q-btn>
+                  <span v-else-if="analysis.status === 'completed'" class="text-caption text-positive">Keine Fehlerbilder gefunden</span>
+                  <span v-else class="text-caption text-negative">Fehleranalyse {{ analysis.status }}<span v-if="analysis.error">: {{ analysis.error }}</span></span>
+                </template>
+                <q-btn-dropdown
+                  outline
+                  dense
+                  no-caps
+                  color="secondary"
+                  icon="rule"
+                  label="Fehlerbilder markieren"
+                  :loading="analysisStarting"
+                  :disable="analysis?.status === 'queued' || analysis?.status === 'running'"
+                >
+                  <q-list dense style="max-width: 360px">
+                    <q-item v-close-popup clickable @click="startAnalysis('errors_validation')">
+                      <q-item-section>
+                        <q-item-label>Validierungsbilder</q-item-label>
+                        <q-item-label caption>Die Bilder hinter TP/FP/FN oben: wo das Modell noch Fehler macht</q-item-label>
+                      </q-item-section>
+                    </q-item>
+                    <q-item v-close-popup clickable @click="startAnalysis('errors_labeled')">
+                      <q-item-section>
+                        <q-item-label>Alle annotierten Bilder</q-item-label>
+                        <q-item-label caption>Auch Trainingsbilder: Fehler dort deuten oft auf fehlende oder falsche Annotationen</q-item-label>
+                      </q-item-section>
+                    </q-item>
+                  </q-list>
+                </q-btn-dropdown>
+                <HelpIcon term="errorAnalysis" inline />
+              </template>
+            </div>
             <MetricsTable :metrics="selected.metrics_json" />
           </q-card-section>
           <q-card-section class="q-pt-none">
@@ -206,15 +281,17 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useQuasar, type QTableColumn } from 'quasar'
+import { useRouter } from 'vue-router'
 import EpochChart from '@/components/EpochChart.vue'
 import HelpIcon from '@/components/HelpIcon.vue'
 import MetricsTable from '@/components/MetricsTable.vue'
 import { GLOSSARY, type GlossaryTerm } from '@/glossary'
-import { api, errorMessage, fmtDate, fmtPct, type BaseModelOption, type DatasetStats, type TrainingEligibility, type TrainingRun } from '@/services/api'
+import { api, errorMessage, fmtDate, fmtPct, type BaseModelOption, type BatchScope, type BatchTest, type DatasetStats, type TrainerGpuStatus, type TrainingEligibility, type TrainingRun } from '@/services/api'
 import { useClassesStore } from '@/stores/classes'
 import { useModelsStore } from '@/stores/models'
 
 const $q = useQuasar()
+const router = useRouter()
 const models = useModelsStore()
 const classes = useClassesStore()
 
@@ -385,8 +462,66 @@ function cancel(id: number) {
   })
 }
 
+// training requires a GPU; the trainer re-checks every 30 s (healthcheck)
+const gpu = ref<TrainerGpuStatus | null>(null)
+async function refreshGpu() {
+  try {
+    gpu.value = (await api.trainerGpu()).status
+  } catch {
+    gpu.value = null
+  }
+}
+
 let timer: number | undefined
+let gpuTimer: number | undefined
+// error analysis of the selected run's model (a batch test with scope errors_*)
+const analysis = ref<BatchTest | null>(null)
+const analysisStarting = ref(false)
+let analysisTimer: number | undefined
+
+async function startAnalysis(scope: BatchScope) {
+  const run = selected.value
+  if (!run?.model_version) return
+  analysisStarting.value = true
+  try {
+    analysis.value = await api.startBatchTest({
+      model: run.model_version,
+      // same parameters as the evaluation behind the metrics table
+      input_size: `${run.input_width}x${run.input_height}`,
+      confidence: run.metrics_json?.confidence_for_pr ?? null,
+      scope,
+    })
+    pollAnalysis()
+  } catch (e) {
+    $q.notify({ type: 'negative', message: errorMessage(e) })
+  } finally {
+    analysisStarting.value = false
+  }
+}
+
+async function pollAnalysis() {
+  window.clearTimeout(analysisTimer)
+  if (!analysis.value) return
+  try {
+    analysis.value = await api.getBatchTest(analysis.value.id)
+  } catch {
+    /* polling: ignore transient errors */
+  }
+  if (analysis.value.status === 'queued' || analysis.value.status === 'running') analysisTimer = window.setTimeout(pollAnalysis, 1500)
+}
+
+async function openErrorImages() {
+  try {
+    const first = (await api.listImages({ has_errors: true, limit: 1 })).items[0]
+    router.push({ name: 'annotate', params: first ? { id: first.id } : {}, query: { filter: 'errors' } })
+  } catch (e) {
+    $q.notify({ type: 'negative', message: errorMessage(e) })
+  }
+}
+
 onMounted(async () => {
+  refreshGpu()
+  gpuTimer = window.setInterval(refreshGpu, 30000)
   await Promise.all([models.refresh(), classes.refresh()])
   form.input_size = models.defaultInputSize
   form.base_model_id = models.settings?.default_base_model ?? 'rtmdet-s-coco'
@@ -400,5 +535,9 @@ onMounted(async () => {
     if (active || selected.value?.status === 'running') refresh()
   }, 3000)
 })
-onBeforeUnmount(() => window.clearInterval(timer))
+onBeforeUnmount(() => {
+  window.clearInterval(timer)
+  window.clearInterval(gpuTimer)
+  window.clearTimeout(analysisTimer)
+})
 </script>

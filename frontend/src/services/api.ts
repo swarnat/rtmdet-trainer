@@ -60,6 +60,15 @@ export interface ImageItem {
   annotation_count: number
   hard_negative_count: number
   suggestion_count: number | null
+  /** latest error analysis: false positives / false negatives of the model (null = not marked) */
+  error_fp: number | null
+  error_fn: number | null
+  /** empty image visually identical to this image (duplicate check); not used for training */
+  duplicate_of: number | null
+  /** largest block difference to the original (0 = pixel-identical) */
+  duplicate_score: number | null
+  /** reviewed on the duplicates page and kept */
+  duplicate_keep: boolean
   reviewed_classes: string[] | null
   needs_review: boolean
   /** link count: training snapshots (models) that use this image */
@@ -69,9 +78,42 @@ export interface ImageItem {
   labeled_at: string | null
 }
 
+export interface DuplicateGroup {
+  original: ImageItem
+  duplicates: ImageItem[]
+}
+
+/** Open images without suggestions of one camera view, for the quick review */
+export interface CameraGroup {
+  /** camera identity from the metadata, e.g. "AXIS Q3536-LVE · B8A44F55F126" ("" = unknown or switched off) */
+  camera: string
+  images: {
+    image: ImageItem
+    /** image to blink-compare with: a known-empty image of the view ("negative") or the previous image ("previous") */
+    compare_with: number | null
+    compare_kind: 'negative' | 'previous' | null
+  }[]
+}
+
 export interface ImageDetail extends ImageItem {
   annotations: Annotation[]
   suggestion: Suggestion | null
+  error_mark: ErrorMark | null
+}
+
+/** Error analysis result for one labeled image: where the model disagrees with the annotations */
+export interface ErrorMark {
+  batch_id: number | null
+  model_version: string
+  input_width: number
+  input_height: number
+  confidence: number
+  true_positives: number
+  /** detections without a matching annotation */
+  false_positives: DetectionItem[]
+  /** annotations the model missed */
+  false_negatives: { class: ClassName; bbox: { x1: number; y1: number; x2: number; y2: number } }[]
+  created_at: string
 }
 
 /** Stored detections of a batch test for one image */
@@ -85,6 +127,10 @@ export interface Suggestion {
   created_at: string
 }
 
+/** errors_*: error analysis on labeled images instead of suggestions for open images */
+export type BatchScope = 'unlabeled' | 'unlabeled_and_review' | 'unlabeled_last_upload' | 'errors_validation' | 'errors_labeled'
+export const isErrorAnalysis = (b: { scope: BatchScope }) => b.scope.startsWith('errors_')
+
 export interface BatchTest {
   id: number
   status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
@@ -93,11 +139,14 @@ export interface BatchTest {
   input_width: number
   input_height: number
   confidence: number
-  scope: 'unlabeled' | 'unlabeled_and_review'
+  scope: BatchScope
   total: number
   processed: number
+  /** suggestions, or for an error analysis: number of false positives + false negatives */
   detections: number
   failed_images: number
+  /** error analysis: images with at least one error */
+  marked_images: number
   error: string | null
   created_at: string
   started_at: string | null
@@ -106,7 +155,8 @@ export interface BatchTest {
 
 export interface UploadResult {
   filename: string | null
-  status: 'created' | 'duplicate' | 'error'
+  /** deleted: the same file was deleted earlier and is not imported again */
+  status: 'created' | 'duplicate' | 'deleted' | 'error'
   image: ImageItem | null
   error: string | null
 }
@@ -146,9 +196,42 @@ export interface Metrics {
   per_size?: Record<string, MetricSet>
   hard_negatives?: HardNegativeMetrics
   comparison?: Comparison
-  mmdet_val_history?: { epoch: number; bbox_mAP?: number; bbox_mAP_50?: number; bbox_mAP_s?: number }[]
+  mmdet_val_history?: ValHistoryEntry[]
   head_init?: Record<string, string>
   note?: string
+}
+
+/** All model versions evaluated on the current validation set (comparable values) */
+export interface Benchmark {
+  id: number
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+  class_names: string[] | null
+  num_images: number
+  num_boxes: number
+  num_hard_negatives: number
+  total: number
+  processed: number
+  /** seen_in_training: current validation images that were training images of the model */
+  results: Record<string, Metrics & { status: string; error?: string; seen_in_training?: number | null }>
+  error: string | null
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+}
+
+export interface ValMaps {
+  mAP50?: number
+  'mAP50-95'?: number
+}
+
+/** MMDetection validation after one epoch (0..1); per_class/per_size only for runs since the detailed metric */
+export interface ValHistoryEntry {
+  epoch: number
+  bbox_mAP?: number
+  bbox_mAP_50?: number
+  bbox_mAP_s?: number
+  per_class?: Record<string, ValMaps>
+  per_size?: Record<string, ValMaps>
 }
 
 export interface HardNegativeBucket {
@@ -164,6 +247,8 @@ export interface HardNegativeMetrics {
   validation_only: HardNegativeBucket
   train_only: HardNegativeBucket
   per_class: Record<string, HardNegativeBucket>
+  /** only hard negatives on validation images (missing in metrics of older runs) */
+  per_class_validation?: Record<string, HardNegativeBucket>
 }
 
 export interface Comparison {
@@ -173,6 +258,9 @@ export interface Comparison {
     string,
     { precision: number | null; recall: number | null; mAP50: number | null; 'mAP50-95': number | null; hard_negative_fp_rate: number | null }
   >
+  /** 'validation' = HN-FP-rate delta on validation images only; missing = older runs (incl. training images) */
+  hard_negative_basis?: 'validation'
+  min_reliable_boxes?: number
   warnings: string[]
 }
 
@@ -198,6 +286,13 @@ export interface ModelVersion {
   activated_at: string | null
 }
 
+export interface TrainerGpuStatus {
+  available: boolean
+  devices: string[]
+  error: string | null
+  checked_at: string
+}
+
 export interface TrainingProgress {
   phase?: string
   epoch?: number
@@ -208,7 +303,7 @@ export interface TrainingProgress {
   lr?: number
   percent?: number
   eta_seconds?: number | null
-  val_history?: { epoch: number; bbox_mAP?: number; bbox_mAP_50?: number }[]
+  val_history?: ValHistoryEntry[]
 }
 
 export interface SplitStats {
@@ -224,6 +319,8 @@ export interface TrainingEligibility {
   needs_review: number
   negative: number
   hard_negatives: number
+  /** labeled empty images marked as duplicates, not used */
+  duplicates?: number
 }
 
 export interface TrainingRun {
@@ -235,6 +332,7 @@ export interface TrainingRun {
   dataset_stats_json: {
     classes?: string[]
     excluded_needs_review?: number
+    excluded_duplicates?: number
     hard_negatives?: { total: number; per_class: Record<string, number>; train_crops: number; oversample: number }
     train?: SplitStats
     validation?: SplitStats
@@ -276,6 +374,8 @@ export interface DatasetStats {
   images_unlabeled: number
   images_negative: number
   images_needs_review: number
+  /** empty images marked as duplicates of another empty image */
+  images_duplicates?: number
   /** deleted images whose files are kept because training snapshots still use them */
   images_retained_for_snapshots?: number
   splits: { train: number; validation: number }
@@ -290,6 +390,8 @@ export type Settings = Record<string, unknown> & {
   nms_iou_threshold: number
   validation_ratio: number
   eval_confidence: number
+  duplicate_max_difference: number
+  camera_groups_use_metadata: boolean
   hard_negative_context_factor: number
   hard_negative_min_crop_fraction: number
   hard_negative_oversample: number
@@ -366,6 +468,19 @@ function json(method: string, body?: unknown): RequestInit {
   }
 }
 
+/** restricts previous/next navigation in the annotation view to the image list filter */
+export interface NavFilter {
+  status?: 'unlabeled' | 'labeled'
+  split?: 'train' | 'validation'
+  has_errors?: boolean
+  duplicate?: boolean
+  no_suggestions?: boolean
+  /** suggestions whose lowest confidence is >= 0.7 / 0.4-0.7 / < 0.4 */
+  suggestion_level?: 'high' | 'medium' | 'low'
+  /** images of the most recent upload session */
+  last_upload?: boolean
+}
+
 export interface DetectOptions {
   model?: string | null
   input_size?: string | null
@@ -387,6 +502,11 @@ export const api = {
     negative?: boolean
     needs_review?: boolean
     has_suggestions?: boolean
+    has_errors?: boolean
+    duplicate?: boolean
+    no_suggestions?: boolean
+    suggestion_level?: 'high' | 'medium' | 'low'
+    last_upload?: boolean
     offset?: number
     limit?: number
   }) {
@@ -397,8 +517,18 @@ export const api = {
     return request<{ total: number; items: ImageItem[] }>(`/images?${q}`)
   },
   getImage: (id: number) => request<ImageDetail>(`/images/${id}`),
-  neighbours: (id: number, status?: string) =>
-    request<{ previous: number | null; next: number | null }>(`/images/${id}/neighbours${status ? `?status=${status}` : ''}`),
+  neighbours: (id: number, filter: NavFilter = {}) => {
+    const q = new URLSearchParams()
+    if (filter.status) q.set('status', filter.status)
+    if (filter.split) q.set('split', filter.split)
+    if (filter.has_errors) q.set('has_errors', 'true')
+    if (filter.duplicate) q.set('duplicate', 'true')
+    if (filter.no_suggestions) q.set('no_suggestions', 'true')
+    if (filter.suggestion_level) q.set('suggestion_level', filter.suggestion_level)
+    if (filter.last_upload) q.set('last_upload', 'true')
+    const qs = q.toString()
+    return request<{ previous: number | null; next: number | null }>(`/images/${id}/neighbours${qs ? `?${qs}` : ''}`)
+  },
   imageUrl: (id: number) => `${BASE}/images/${id}/file`,
   thumbnailUrl: (id: number) => `${BASE}/images/${id}/thumbnail`,
   uploadImages(files: File[]) {
@@ -406,9 +536,22 @@ export const api = {
     files.forEach((f) => form.append('files', f, f.name))
     return request<UploadResult[]>('/images', { method: 'POST', body: form })
   },
+  /** Backend downloads the image from `url` and stores it like an upload */
+  downloadImage: (url: string, signal?: AbortSignal) =>
+    request<UploadResult>('/images/from-url', { ...json('POST', { url }), signal }),
   updateImage: (id: number, body: { annotation_status?: string; dataset_split?: string }) =>
     request<ImageDetail>(`/images/${id}`, json('PATCH', body)),
   deleteImage: (id: number) => request<void>(`/images/${id}`, { method: 'DELETE' }),
+  checkDuplicates: () =>
+    request<{ checked: number; duplicates: number; fingerprints_computed: number; failed: number }>('/images/duplicates/check', { method: 'POST' }),
+  /** untested: open images never batch-tested (not part of the review) */
+  startBenchmark: () => request<Benchmark>('/models/benchmarks', { method: 'POST' }),
+  latestBenchmark: () => request<Benchmark | null>('/models/benchmarks/latest'),
+  cameraGroups: () => request<{ groups: CameraGroup[]; untested: number }>('/images/camera-groups'),
+  duplicateGroups: () => request<DuplicateGroup[]>('/images/duplicates/groups'),
+  resolveDuplicates: (body: { keep: number[]; delete: number[] }) =>
+    request<{ kept: number; deleted: number }>('/images/duplicates/resolve', json('POST', body)),
+  deleteErrorMark: (id: number) => request<ImageDetail>(`/images/${id}/error-mark`, { method: 'DELETE' }),
   saveAnnotations: (id: number, annotations: AnnotationInput[], markLabeled = true) =>
     request<ImageDetail>(`/images/${id}/annotations`, json('PUT', { annotations, mark_labeled: markLabeled })),
   datasetStats: () => request<DatasetStats>('/images/stats'),
@@ -431,6 +574,8 @@ export const api = {
     request<TrainingEligibility>(`/training/eligibility?classes=${encodeURIComponent(classes.join(','))}`),
   startRun: (body: { base_model_id: string; class_names?: string[]; input_size: string; epochs: number; batch_size: number; learning_rate?: number | null; num_workers?: number }) =>
     request<TrainingRun>('/training/runs', json('POST', body)),
+  /** status null = unknown (trainer not running / not checked yet) */
+  trainerGpu: () => request<{ status: TrainerGpuStatus | null }>('/training/gpu'),
   cancelRun: (id: number) => request<TrainingRun>(`/training/runs/${id}/cancel`, { method: 'POST' }),
 
   // models
@@ -445,7 +590,7 @@ export const api = {
   artifactUrl: (version: string, artifact: string) => `${BASE}/models/${version}/artifacts/${artifact}`,
 
   // batch tests
-  startBatchTest: (body: { model: string; input_size?: string | null; confidence?: number | null; scope: string }) =>
+  startBatchTest: (body: { model: string; input_size?: string | null; confidence?: number | null; scope: BatchScope }) =>
     request<BatchTest>('/batch-tests', json('POST', body)),
   listBatchTests: () => request<BatchTest[]>('/batch-tests'),
   getBatchTest: (id: number) => request<BatchTest>(`/batch-tests/${id}`),

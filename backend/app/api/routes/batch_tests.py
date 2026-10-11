@@ -6,10 +6,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from odcore.db import BatchStatus, PredictionBatch, utcnow
+from odcore.settings_store import get_setting
 
 from app.core.database import get_db
 from app.schemas.batch_test import BatchTestCreate, BatchTestOut
-from app.services.batch_test import get_runner, select_image_ids
+from app.services.batch_test import ERROR_SCOPES, get_runner, select_image_ids
 from app.services.inference import InvalidRequestError, resolve_parameters
 from app.services.model_registry import ModelNotFoundError, resolve_model
 
@@ -33,13 +34,19 @@ def get_or_404(session: Session, batch_id: int) -> PredictionBatch:
     "",
     response_model=BatchTestOut,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Run a model over all open images and store suggestions",
+    summary="Run a model over all open images and store suggestions, or analyse its errors on labeled images",
     description="Runs in the background inside the API (one batch at a time). Existing suggestions of the "
-    "affected images are replaced; annotations are not changed.",
+    "affected images are replaced; annotations are not changed. Scopes errors_validation / errors_labeled run an "
+    "error analysis instead: images where the model produces false positives or false negatives are marked "
+    "(replacing all marks of the previous analysis). Its default confidence is the setting eval_confidence, "
+    "as in the training evaluation.",
 )
 def start(body: BatchTestCreate, session: Session = Depends(get_db)) -> BatchTestOut:
+    confidence = body.confidence
+    if confidence is None and body.scope in ERROR_SCOPES:
+        confidence = float(get_setting(session, "eval_confidence"))
     try:
-        width, height, conf = resolve_parameters(session, body.input_size, body.confidence)
+        width, height, conf = resolve_parameters(session, body.input_size, confidence)
         ref = resolve_model(session, body.model)
     except InvalidRequestError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc

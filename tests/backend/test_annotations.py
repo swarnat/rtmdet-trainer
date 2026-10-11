@@ -63,3 +63,50 @@ def test_assign_split_deterministic_and_ratio():
     assert splits == [assign_split(sha, 0.15) for sha in shas]
     ratio = splits.count("validation") / len(splits)
     assert 0.12 < ratio < 0.18
+
+
+def test_neighbours_stay_within_split(session_factory):
+    from odcore.db import DatasetSplit
+
+    from app.db.repositories.images import list_images, neighbour_ids
+
+    with session_factory() as s:
+        imgs = [make_image(s, sha=str(i) * 64) for i in range(4)]
+        for img, split in zip(imgs, [DatasetSplit.train, DatasetSplit.validation, DatasetSplit.train, None]):
+            img.dataset_split = split
+        s.commit()
+        ids = [i.id for i in imgs]
+        assert neighbour_ids(s, ids[0], None, DatasetSplit.train) == (None, ids[2])
+        assert neighbour_ids(s, ids[1], None, DatasetSplit.validation) == (None, None)
+        assert neighbour_ids(s, ids[0], None) == (None, ids[1])
+        total, items = list_images(s, split=DatasetSplit.validation)
+        assert total == 1 and items[0].id == ids[1]
+
+
+def test_last_upload_session(session_factory):
+    from datetime import datetime, timedelta, timezone
+
+    from app.db.repositories.images import last_upload_ids
+
+    t0 = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
+    offsets = {1: 0, 2: 5, 3: 300, 4: 310, 5: 335}  # minutes: two sessions, the second one with < 30 min pauses
+    with session_factory() as s:
+        for i, m in offsets.items():
+            s.add(Image(id=i, s3_object_key=f"images/{i}.jpg", sha256=f"{i:064d}", content_type="image/jpeg",
+                        size_bytes=1, width=10, height=10, created_at=t0 + timedelta(minutes=m)))
+        s.commit()
+        assert sorted(last_upload_ids(s)) == [3, 4, 5]
+        s.get(Image, 5).deleted_at = t0
+        s.commit()
+        assert sorted(last_upload_ids(s)) == [3, 4]
+
+
+def test_split_chosen_before_labeling_is_kept(session_factory):
+    from odcore.db import DatasetSplit
+
+    with session_factory() as s:
+        img = make_image(s, sha="c" * 64)
+        img.dataset_split = DatasetSplit.validation  # chosen in the UI before the first save (e.g. a real intrusion)
+        s.commit()
+        replace_annotations(s, img, [], mark_labeled=True)
+        assert img.dataset_split == DatasetSplit.validation

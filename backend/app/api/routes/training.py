@@ -13,6 +13,7 @@ from odcore.db import ModelVersion, TrainingRun, TrainingStatus, utcnow
 from odcore.geometry import parse_input_size
 
 from app.core.database import get_db
+from app.core import queue
 from app.core.queue import enqueue_training, get_redis
 from app.db.repositories import training as repo
 from app.schemas.training import BaseModelOption, TrainingCreate, TrainingEligibility, TrainingLog, TrainingRunOut
@@ -86,8 +87,22 @@ def base_models(session: Session = Depends(get_db)) -> list[BaseModelOption]:
     return options
 
 
+@router.get("/gpu", summary="GPU status of the trainer (training requires a GPU)")
+def gpu_status() -> dict:
+    """``status`` is null while unknown (trainer not running or not yet checked)."""
+    return {"status": queue.trainer_gpu_status()}
+
+
 @router.post("/runs", response_model=TrainingRunOut, status_code=status.HTTP_201_CREATED, summary="Queue a training run")
 def create_run(body: TrainingCreate, session: Session = Depends(get_db)) -> TrainingRunOut:
+    gpu = queue.trainer_gpu_status()
+    if gpu is not None and not gpu.get("available"):
+        # unknown status (trainer down) is accepted: the job waits in the queue and the trainer checks again
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"the trainer has no usable GPU ({gpu.get('error') or 'unknown error'}); training requires an NVIDIA GPU. "
+            "Re-create the trainer container: docker compose up -d --force-recreate trainer",
+        )
     try:
         width, height = parse_input_size(body.input_size)
     except ValueError as exc:

@@ -66,6 +66,29 @@
             <template #append><HelpIcon term="evalConfidence" /></template>
           </q-input>
         </div>
+        <div class="text-subtitle2">Duplikate<HelpIcon term="duplicates" inline /></div>
+        <div class="row q-col-gutter-md">
+          <q-input
+            v-model.number="form.duplicate_max_difference"
+            type="number"
+            step="0.01"
+            outlined
+            dense
+            label="Max. Abweichung für Duplikate"
+            hint="kleiner = strenger; wirkt ab der nächsten Prüfung"
+            class="col-6 col-sm-4"
+          />
+        </div>
+        <div class="text-subtitle2">Sichtung<HelpIcon term="review" inline /></div>
+        <q-toggle
+          v-model="form.camera_groups_use_metadata"
+          label="Kameras anhand der Bild-Metadaten trennen (EXIF-Seriennummer, z. B. AXIS)"
+        />
+        <div class="text-caption text-muted">
+          An: Bilder verschiedener Geräte landen nie in derselben Gruppe; innerhalb eines Geräts werden Tag, Nacht und Infrarot
+          großzügig zusammengefasst. Bilder ohne Metadaten werden nur untereinander nach Bildinhalt gruppiert.
+          Aus: Gruppierung nur nach Bildinhalt.
+        </div>
         <div class="text-subtitle2">Hard Negatives<HelpIcon term="hardNegatives" inline /></div>
         <div class="text-caption text-muted">
           Für jedes Hard Negative eines Trainingsbildes wird ein Ausschnitt erzeugt: Box × Kontextfaktor je Seite, auf 16:9 erweitert,

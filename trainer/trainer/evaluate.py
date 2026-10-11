@@ -199,7 +199,10 @@ def hard_negative_regression(detect: Callable[[np.ndarray], list], hard_negative
         cls = names.index(hn["class"])
         boxes = np.array([[d.x1, d.y1, d.x2, d.y2] for d in cache[hn["image_id"]] if d.class_id == cls and d.confidence >= conf])
         hit = bool(len(boxes)) and float(box_iou(np.array([hn["bbox"]]), boxes).max()) >= iou_thr
-        for key in ("overall", f"class:{hn['class']}", f"split:{hn['split']}"):
+        keys = ["overall", f"class:{hn['class']}", f"split:{hn['split']}"]
+        if hn["split"] == "validation":
+            keys.append(f"val_class:{hn['class']}")
+        for key in keys:
             bump(key, hit)
 
     def finish(b: dict | None) -> dict:
@@ -213,6 +216,8 @@ def hard_negative_regression(detect: Callable[[np.ndarray], list], hard_negative
         "validation_only": finish(buckets.get("split:validation")),
         "train_only": finish(buckets.get("split:train")),
         "per_class": {n: finish(buckets.get(f"class:{n}")) for n in names if f"class:{n}" in buckets},
+        # only images the model never saw as training crops: the fair basis for comparing two models
+        "per_class_validation": {n: finish(buckets.get(f"val_class:{n}")) for n in names if f"val_class:{n}" in buckets},
     }
 
 
@@ -265,10 +270,22 @@ def evaluate_detector(detector, coco_gt: dict, samples: list[dict], model_classe
     return result
 
 
+# below this many validation boxes per class, one box shifts recall by more than 3 pp: deltas are not judged
+MIN_RELIABLE_BOXES = 30
+
+
 def compare(new: dict, baseline: dict, baseline_version: str, recall_tolerance: float = 0.02) -> dict:
-    """Per-class deltas new - baseline, plus warnings when fewer false alarms come with lower recall."""
+    """Per-class deltas new - baseline, plus warnings when fewer false alarms come with lower recall.
+
+    The hard-negative FP rate is compared on validation images only: the new model was trained on crops of
+    all training-image hard negatives, the baseline usually on fewer, so including them favours the new model.
+    """
     def delta(a, b):
         return None if a is None or b is None else a - b
+
+    def hn_rate(metrics: dict, name: str):
+        b = ((metrics.get("hard_negatives") or {}).get("per_class_validation") or {}).get(name)
+        return b["fp_rate"] if b else None
 
     per_class = {}
     warnings = []
@@ -277,19 +294,21 @@ def compare(new: dict, baseline: dict, baseline_version: str, recall_tolerance: 
         if m is None or b is None:
             continue
         entry = {k: delta(m.get(k), b.get(k)) for k in ("precision", "recall", "mAP50", "mAP50-95")}
-        hn_new = (new.get("hard_negatives") or {}).get("per_class", {}).get(name)
-        hn_old = (baseline.get("hard_negatives") or {}).get("per_class", {}).get(name)
-        entry["hard_negative_fp_rate"] = delta(hn_new and hn_new["fp_rate"], hn_old and hn_old["fp_rate"])
+        entry["hard_negative_fp_rate"] = delta(hn_rate(new, name), hn_rate(baseline, name))
         per_class[name] = entry
         if entry["recall"] is not None and entry["recall"] < -recall_tolerance:
+            boxes = (m.get("tp") or 0) + (m.get("fn") or 0)
+            note = f" (only {boxes} validation boxes)" if boxes < MIN_RELIABLE_BOXES else ""
             if entry["hard_negative_fp_rate"] is not None and entry["hard_negative_fp_rate"] < 0:
-                warnings.append(f"{name}: fewer known false positives, but recall dropped by {-entry['recall']:.1%}")
+                warnings.append(f"{name}: fewer known false positives, but recall dropped by {-entry['recall']:.1%}{note}")
             else:
-                warnings.append(f"{name}: recall dropped by {-entry['recall']:.1%}")
+                warnings.append(f"{name}: recall dropped by {-entry['recall']:.1%}{note}")
     return {
         "baseline_model": baseline_version,
         "baseline": {"overall": baseline["overall"], "per_class": baseline["per_class"],
                      "hard_negatives": baseline.get("hard_negatives")},
         "delta_per_class": per_class,
+        "hard_negative_basis": "validation",
+        "min_reliable_boxes": MIN_RELIABLE_BOXES,
         "warnings": warnings,
     }

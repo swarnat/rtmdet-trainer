@@ -6,12 +6,13 @@ from sqlalchemy.orm import Session
 from odcore.classes import active_class_names, list_classes
 from sqlalchemy import delete
 
-from odcore.db import Annotation, AnnotationStatus, DatasetSplit, Image, ImageSuggestion, utcnow
+from odcore.db import Annotation, AnnotationStatus, DatasetSplit, Image, ImageErrorMark, ImageSuggestion, utcnow
 from odcore.geometry import normalize_box
 from odcore.settings_store import get_setting
 from odcore.splits import assign_split
 
 from app.schemas.annotation import AnnotationIn
+from app.services.duplicates import clear_marks_for
 
 
 class AnnotationValidationError(ValueError):
@@ -31,8 +32,9 @@ def mark_reviewed(session: Session, image: Image) -> None:
     image.labeled_at = utcnow()
     image.reviewed_classes = active_class_names(session)
     ensure_split(session, image)
-    # batch-test suggestions have been dealt with
+    # batch-test suggestions and error-analysis marks have been dealt with
     session.execute(delete(ImageSuggestion).where(ImageSuggestion.image_id == image.id))
+    session.execute(delete(ImageErrorMark).where(ImageErrorMark.image_id == image.id))
 
 
 def replace_annotations(session: Session, image: Image, items: list[AnnotationIn], mark_labeled: bool) -> Image:
@@ -60,6 +62,8 @@ def replace_annotations(session: Session, image: Image, items: list[AnnotationIn
     image.annotations.clear()
     session.flush()
     image.annotations.extend(new_boxes)
+    if new_boxes:
+        clear_marks_for(session, image)  # not an empty image any more
     if mark_labeled:
         mark_reviewed(session, image)
     image.updated_at = utcnow()

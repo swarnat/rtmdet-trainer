@@ -114,3 +114,22 @@ def test_model_used_by_running_batch_test_cannot_be_deleted(client, session_fact
 
 def test_delete_unknown_model(client):
     assert client.delete("/api/v1/models/model-0099").status_code == 404
+
+
+def test_benchmark_is_queued_once_and_reported(client, session_factory, monkeypatch):
+    from app.api.routes import models as model_routes
+
+    queued = []
+    monkeypatch.setattr(model_routes, "enqueue_benchmark", lambda bid: queued.append(bid) or f"benchmark-{bid}")
+    assert client.get("/api/v1/models/benchmarks/latest").json() is None
+    first = client.post("/api/v1/models/benchmarks")
+    assert first.status_code == 202 and first.json()["status"] == "queued" and queued == [first.json()["id"]]
+    assert client.post("/api/v1/models/benchmarks").status_code == 409  # one at a time
+    from odcore.db import ModelBenchmark
+    with session_factory() as s:
+        b = s.get(ModelBenchmark, first.json()["id"])
+        b.status, b.total, b.processed = BatchStatus.completed, 2, 2
+        b.results_json = {"model-0001": {"status": "production", "overall": {"mAP50": 0.5}}}
+        s.commit()
+    latest = client.get("/api/v1/models/benchmarks/latest").json()
+    assert latest["status"] == "completed" and latest["results"]["model-0001"]["overall"]["mAP50"] == 0.5

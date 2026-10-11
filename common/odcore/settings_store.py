@@ -26,6 +26,12 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "hard_negative_min_crop_fraction": 0.25,
     # how often each hard-negative crop appears in the training split
     "hard_negative_oversample": 3,
+    # Duplicate check of empty images: largest allowed block difference (normalised brightness units, 0 = pixel-identical).
+    # Lower = stricter (fewer images marked); swaying trees, moved lights or a parked vehicle exceed ~0.12.
+    "duplicate_max_difference": 0.12,
+    # Review page: use the camera identity from the image metadata (EXIF serial number, e.g. AXIS) to group
+    # by camera - images of different devices are never grouped. Off: grouping by image content only.
+    "camera_groups_use_metadata": True,
     # Production detection API (inference-server): base URL and access key for model uploads ("" = not configured)
     "deployment_url": "",
     "deployment_access_key": "",

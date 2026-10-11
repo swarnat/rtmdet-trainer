@@ -29,14 +29,17 @@ export const GLOSSARY = {
   hnFpRate:
     'HN-FP-Rate: Anteil der bekannten Fehlalarme, die das Modell immer noch macht. 0 % = keinen davon wiederholt. Niedriger ist besser.',
   delta:
-    'Δ (Differenz): Um wie viele Prozentpunkte das neue Modell besser (grün) oder schlechter (rot) ist als das aktuelle Production-Modell.',
+    'Δ (Differenz): Um wie viele Prozentpunkte das neue Modell besser (grün) oder schlechter (rot) ist als das aktuelle Production-Modell. ' +
+    'Bei wenigen Validierungsboxen („wenig Daten“) bleibt die Zahl grau: Dann kann schon eine einzelne Box den Unterschied ausmachen.',
   loss:
     'Loss: Fehlerwert während des Lernens. Er sollte im Lauf des Trainings sinken. Wichtig ist der Verlauf, nicht die genaue Zahl.',
   epoch:
     'Epoch: Ein kompletter Durchgang durch alle Trainingsbilder. Bei 30 Epochs sieht das Modell jedes Bild 30-mal.',
   valChart:
     'Nach jeder Epoche wird das Modell an Prüfbildern getestet, die es nicht zum Lernen benutzt. ' +
-    'Die Linien zeigen, wie gut es dabei war – steigen sie, lernt das Modell dazu. Die Farben zeigen grob die Qualität (rot = schwach, orange = mittel, grün = gut).',
+    'Die Linien zeigen, wie gut es dabei war – steigen sie, lernt das Modell dazu. „Gesamt“ ist der Mittelwert, dazu gibt es je Klasse eine Linie ' +
+    'und gestrichelt je Boxgröße (klein/mittel/groß). Ein Klick auf einen Legendeneintrag blendet die Linie aus oder ein. ' +
+    'Die Hintergrundfarben zeigen grob die Qualität (rot = schwach, orange = mittel, grün = gut).',
   status:
     'Status eines Modells: „production“ ist das Modell, das gerade für alle Erkennungen benutzt wird (immer genau eins). ' +
     '„candidate“ ist ein neues Modell, das noch geprüft und bei Bedarf aktiviert werden kann. „archived“ ist ein früheres Modell, das jederzeit wieder aktiviert werden kann.',
@@ -61,7 +64,9 @@ export const GLOSSARY = {
     'So lässt sich später genau nachvollziehen, womit das Modell gelernt hat.',
   split:
     'Split (train / val): Jedes annotierte Bild ist fest entweder ein Trainingsbild (train – damit lernt das Modell) oder ein Prüfbild ' +
-    '(val – damit wird das Modell getestet, ohne dass es diese Bilder vorher gesehen hat).',
+    '(val – damit wird das Modell getestet, ohne dass es diese Bilder vorher gesehen hat). Zugeteilt wird automatisch beim ersten ' +
+    'Speichern (Validierungsanteil unter Einstellungen); unter „Bild → Verwendung“ lässt es sich gezielt festlegen, z. B. echte ' +
+    'Eindringlinge als Prüfbilder, die das Modell nie trainieren soll.',
   negative:
     'Negativ: Ein annotiertes Bild ohne Objekte. Solche Bilder sind wichtig – das Modell lernt daran, wo nichts zu erkennen ist.',
   needsReview:
@@ -70,6 +75,30 @@ export const GLOSSARY = {
   batchTest:
     'Batch-Test: Ein Modell sucht einmal auf vielen Bildern nach Objekten und speichert die Treffer als Vorschläge. ' +
     'Beim Annotieren kannst du die Vorschläge dann übernehmen statt alles selbst einzuzeichnen.',
+  benchmark:
+    'Vergleich auf aktuellem Validierungsset: Die beim Training gespeicherten Metriken gelten für das damalige Validierungsset, das ' +
+    'seitdem gewachsen ist – Werte verschiedener Modelle sind so nicht vergleichbar. Hier werden alle Modelle neu auf denselben, ' +
+    'heutigen Validierungsbildern bewertet (exportiertes OpenVINO-Modell, eigene Auflösung, gleiche Confidence wie im Training), ' +
+    'inklusive Hard-Negative-Test auf den Validierungsbildern. Läuft im Trainer, nach einem eventuell laufenden Training.',
+  review:
+    'Sichtung: Offene Bilder, auf denen ein Batch-Test nichts gefunden hat, nach Kamera gruppiert. Noch nie getestete Bilder fehlen hier ' +
+    '(Hinweis oben) – sie gehören zuerst in einen Batch-Test. Jedes Bild folgt ' +
+    'dem ähnlichsten; beim Überblenden (Leertaste) wird es mit dem ähnlichsten bekannt leeren Bild derselben Kamera verglichen, sonst mit ' +
+    'dem vorherigen. Was dabei auftaucht oder verschwindet, ist ein Kandidat für ein Objekt. N speichert das Bild sofort als negativ (leer), ' +
+    'A öffnet es zum Annotieren in einem neuen Tab.',
+  duplicates:
+    'Duplikate: Feste Kameras liefern viele fast gleiche Bilder, die eine Szene im Training überbetonen würden. Verglichen werden nur leere ' +
+    'Bilder – ohne Annotationen und entweder als negativ gespeichert oder ohne Vorschläge im letzten Batch-Test. Gleiche Ansicht, gleiche ' +
+    'Helligkeit und keine sichtbare Änderung (Zeitstempel oben wird ignoriert) = Duplikat. Das erste Bild jeder Gruppe bleibt (annotierte ' +
+    'zuerst), die übrigen werden markiert und nicht fürs Training verwendet. Bilder mit Objekten oder Vorschlägen werden nie markiert. ' +
+    'Die Prüfung läuft automatisch nach jedem Batch-Test. Auf der Seite „Duplikate“ entscheidest du je Bild: behalten (z. B. nützliches ' +
+    'Nachtrauschen, bewegte Bäume) oder löschen. Abweichung = größter Blockunterschied zum Original (0 = pixelgleich); die Schwelle ist ' +
+    'unter Einstellungen einstellbar.',
+  errorAnalysis:
+    'Fehleranalyse: Ein Modell läuft über annotierte Bilder; seine Treffer werden mit deinen Boxen verglichen (gleiche Klasse, IoU ≥ 0,5, ' +
+    'Confidence ≥ Schwelle – wie bei Precision/Recall des Trainings). Bilder mit Fehlalarmen (False Positives) oder übersehenen Objekten ' +
+    '(False Negatives) werden markiert und erscheinen im Filter „Fehlerbilder“. Fehlalarme sind oft fehlende Annotationen – dann übernehmen; ' +
+    'echte Fehlalarme als Hard Negative markieren. Nur Klassen, auf die das Bild geprüft wurde. Jede neue Analyse ersetzt die vorherigen Markierungen.',
   predictions:
     'Predictions: Was das Modell auf diesem Bild erkannt hat (gestrichelte Rahmen). Du kannst sie übernehmen oder als Fehlalarm (Hard Negative) markieren.',
   cocoMapping:

@@ -140,6 +140,12 @@ class ProgressHookFactory:
                 for key in ("coco/bbox_mAP", "coco/bbox_mAP_50", "coco/bbox_mAP_s"):
                     if key in metrics:
                         entry[key.split("/")[-1]] = float(metrics[key])
+                # detail/<class|size>/<name>/<mAP50|mAP50-95> (trainer.rtmdet.metric)
+                for key, value in metrics.items():
+                    parts = key.split("/")
+                    if len(parts) == 5 and parts[1] == "detail":
+                        group = "per_class" if parts[2] == "class" else "per_size"
+                        entry.setdefault(group, {}).setdefault(parts[3], {})[parts[4]] = float(value)
                 self.val_history.append(entry)
                 reporter.progress(val_history=list(self.val_history))
 

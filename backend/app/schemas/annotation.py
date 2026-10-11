@@ -5,7 +5,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.schemas.batch_test import SuggestionOut
+from app.schemas.batch_test import ErrorMarkOut, SuggestionOut
 
 
 class AnnotationIn(BaseModel):
@@ -67,6 +67,14 @@ class ImageOut(BaseModel):
     hard_negative_count: int = 0
     # number of open batch-test suggestions (None = no suggestions stored)
     suggestion_count: Optional[int] = None
+    # latest error analysis: false positives / false negatives of the model on this image (None = not marked)
+    error_fp: Optional[int] = None
+    error_fn: Optional[int] = None
+    # empty image that is visually identical to this image (duplicate check); not used for training
+    duplicate_of: Optional[int] = None
+    duplicate_score: Optional[float] = None
+    # reviewed on the duplicates page and kept
+    duplicate_keep: bool = False
     reviewed_classes: Optional[list[str]] = None
     # labeled, but not checked for all currently active classes
     needs_review: bool = False
@@ -80,6 +88,36 @@ class ImageOut(BaseModel):
 class ImageDetail(ImageOut):
     annotations: list[AnnotationOut]
     suggestion: Optional[SuggestionOut] = None
+    error_mark: Optional[ErrorMarkOut] = None
+
+
+class DuplicateGroup(BaseModel):
+    original: ImageOut
+    duplicates: list[ImageOut]
+
+
+class CameraGroupImage(BaseModel):
+    image: ImageOut
+    # image to blink-compare with: a labeled negative ("negative") or the previous image of the group ("previous")
+    compare_with: Optional[int] = None
+    compare_kind: Optional[Literal["negative", "previous"]] = None
+
+
+class CameraGroup(BaseModel):
+    # camera identity from the metadata ("" = unknown)
+    camera: str = ""
+    images: list[CameraGroupImage]
+
+
+class CameraGroups(BaseModel):
+    groups: list[CameraGroup]
+    # open images never batch-tested: not part of the review
+    untested: int = 0
+
+
+class DuplicateResolve(BaseModel):
+    keep: list[int] = Field(default_factory=list)
+    delete: list[int] = Field(default_factory=list)
 
 
 class ImageList(BaseModel):
@@ -89,9 +127,14 @@ class ImageList(BaseModel):
 
 class UploadResult(BaseModel):
     filename: Optional[str]
-    status: Literal["created", "duplicate", "error"]
+    # deleted: the same file was deleted earlier (tombstone) and is not imported again
+    status: Literal["created", "duplicate", "deleted", "error"]
     image: Optional[ImageOut] = None
     error: Optional[str] = None
+
+
+class UrlDownload(BaseModel):
+    url: str = Field(..., min_length=1, max_length=2048, description="http(s) URL of a JPEG/PNG/WebP/BMP image")
 
 
 class ImageUpdate(BaseModel):

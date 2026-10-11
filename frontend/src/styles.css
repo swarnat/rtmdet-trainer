@@ -48,6 +48,7 @@ body {
 .bg-panel-soft { background: var(--app-panel-soft) !important; }
 .bg-active { background: rgba(6, 182, 212, 0.1) !important; }
 .bg-violet-soft { background: rgba(167, 139, 250, 0.1) !important; color: var(--app-text); }
+.bg-negative-soft { background: rgba(255, 23, 68, 0.08) !important; color: var(--app-text); }
 .bg-amber-soft { background: rgba(251, 191, 36, 0.1) !important; color: var(--app-text); border: 1px solid rgba(251, 191, 36, 0.25); }
 .bg-hn-active { background: rgba(148, 163, 184, 0.12) !important; }
 /* progress track colour (Quasar builds text-/bg- classes from the colour name) */

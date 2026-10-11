@@ -10,6 +10,8 @@ export default createRouter({
       children: [
         { path: '', name: 'dashboard', component: () => import('@/pages/DashboardPage.vue') },
         { path: 'annotate/:id?', name: 'annotate', component: () => import('@/pages/AnnotationPage.vue') },
+        { path: 'review', name: 'review', component: () => import('@/pages/ReviewPage.vue') },
+        { path: 'duplicates', name: 'duplicates', component: () => import('@/pages/DuplicatesPage.vue') },
         { path: 'training', name: 'training', component: () => import('@/pages/TrainingPage.vue') },
         { path: 'models', name: 'models', component: () => import('@/pages/ModelsPage.vue') },
         { path: 'classes', name: 'classes', component: () => import('@/pages/ClassesPage.vue') },

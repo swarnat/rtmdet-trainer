@@ -18,7 +18,7 @@ from typing import Iterable, Optional
 from sqlalchemy import case, delete, exists, insert, select, update
 from sqlalchemy.orm import Session
 
-from .db import Image, SnapshotImage, TrainingRun, TrainingStatus
+from .db import DeletedImage, Image, SnapshotImage, TrainingRun, TrainingStatus
 from .storage import ObjectStorage
 
 log = logging.getLogger(__name__)
@@ -81,6 +81,9 @@ def purge_deleted_images(session: Session, storage: ObjectStorage, image_ids: Op
     images = list(session.execute(stmt).scalars())
     keys = [k for img in images for k in (img.s3_object_key, img.thumbnail_key) if k]
     for img in images:
+        # tombstone normally written when the image was hidden; kept here so no deletion path can miss it
+        if session.get(DeletedImage, img.sha256) is None:
+            session.add(DeletedImage(sha256=img.sha256, original_filename=img.original_filename))
         session.delete(img)
     session.commit()
     for key in keys:

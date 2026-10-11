@@ -52,6 +52,10 @@ def decode_upload(data: bytes) -> DecodedImage:
     content_type = sniff_content_type(data)
     if content_type is None:
         raise ValueError("unsupported image format (allowed: JPEG, PNG, WebP, BMP)")
+    if content_type == "image/jpeg" and not data.rstrip(b"\x00\r\n ").endswith(b"\xff\xd9"):
+        # no end-of-image marker: incomplete download/transfer. OpenCV still "decodes" such files, and
+        # the missing part is then filled with leftover memory (e.g. the previously decoded image).
+        raise ValueError("truncated JPEG (incomplete file, e.g. interrupted download)")
     image = decode_image(data)
     return DecodedImage(
         data=data,

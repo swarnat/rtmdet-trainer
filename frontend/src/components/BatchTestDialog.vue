@@ -19,7 +19,8 @@
         <q-linear-progress :value="active.total ? active.processed / active.total : 0" size="14px" rounded color="secondary" class="q-my-sm">
           <div class="absolute-full flex flex-center text-caption text-white">{{ active.processed }} / {{ active.total }}</div>
         </q-linear-progress>
-        <div class="text-caption">{{ active.detections }} Vorschläge bisher<span v-if="active.failed_images">, {{ active.failed_images }} Fehler</span></div>
+        <div v-if="isErrorAnalysis(active)" class="text-caption">Fehleranalyse: {{ active.marked_images }} Bilder mit Fehlern bisher</div>
+        <div v-else class="text-caption">{{ active.detections }} Vorschläge bisher<span v-if="active.failed_images">, {{ active.failed_images }} Fehler</span></div>
         <q-btn outline color="negative" icon="stop" label="Abbrechen" no-caps class="q-mt-sm" @click="cancel(active.id)" />
       </q-card-section>
 
@@ -32,14 +33,17 @@
           <div class="text-caption">Confidence-Threshold: {{ form.confidence.toFixed(2) }}<HelpIcon term="confidence" inline /></div>
           <q-slider v-model="form.confidence" :min="0.05" :max="0.95" :step="0.05" dense />
         </div>
-        <q-option-group
-          v-model="form.scope"
-          dense
-          :options="[
-            { label: 'Offene Bilder', value: 'unlabeled' },
-            { label: 'Offene Bilder + annotierte Bilder, die für neue Klassen nachzuprüfen sind', value: 'unlabeled_and_review' },
-          ]"
-        />
+        <q-list dense class="q-mx-none">
+          <q-item v-for="o in scopeOptions" :key="o.value" tag="label" v-ripple dense class="q-px-none">
+            <q-item-section avatar style="min-width: 36px">
+              <q-radio v-model="form.scope" :val="o.value" dense />
+            </q-item-section>
+            <q-item-section>
+              <q-item-label>{{ o.label }}</q-item-label>
+              <q-item-label caption>{{ o.caption }}</q-item-label>
+            </q-item-section>
+          </q-item>
+        </q-list>
         <q-btn color="secondary" icon="playlist_play" label="Batch-Test starten" no-caps :loading="starting" @click="start" />
       </q-card-section>
 
@@ -54,7 +58,8 @@
               </td>
               <td>{{ b.model_version }}</td>
               <td>{{ b.processed }}/{{ b.total }} Bilder</td>
-              <td>{{ b.detections }} Vorschläge</td>
+              <td v-if="isErrorAnalysis(b)">Fehleranalyse: {{ b.marked_images }} Bilder mit {{ b.detections }} Fehlern</td>
+              <td v-else>{{ b.detections }} Vorschläge</td>
               <td class="text-caption">{{ fmtDate(b.finished_at ?? b.created_at) }}</td>
             </tr>
           </tbody>
@@ -69,7 +74,7 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useQuasar } from 'quasar'
 import ModelSelector from './ModelSelector.vue'
 import HelpIcon from './HelpIcon.vue'
-import { api, errorMessage, fmtDate, type BatchTest } from '@/services/api'
+import { api, errorMessage, fmtDate, isErrorAnalysis, type BatchScope, type BatchTest } from '@/services/api'
 import { useModelsStore } from '@/stores/models'
 
 const props = defineProps<{ modelValue: boolean }>()
@@ -79,7 +84,14 @@ const models = useModelsStore()
 
 const batches = ref<BatchTest[]>([])
 const starting = ref(false)
-const form = reactive({ model: 'production', input_size: '1536x864', confidence: 0.25, scope: 'unlabeled' })
+const scopeOptions: { label: string; caption: string; value: BatchScope }[] = [
+  { label: 'Offene Bilder', caption: 'alle noch nicht annotierten Bilder', value: 'unlabeled' },
+  { label: 'Offene Bilder aus letztem Upload', caption: 'jüngste Upload-Sitzung (Pausen < 30 min)', value: 'unlabeled_last_upload' },
+  { label: 'Offene + nachzuprüfende Bilder', caption: 'zusätzlich annotierte Bilder, die für neue Klassen zu prüfen sind', value: 'unlabeled_and_review' },
+]
+const form = reactive<{ model: string; input_size: string; confidence: number; scope: BatchScope }>({
+  model: 'production', input_size: '1536x864', confidence: 0.25, scope: 'unlabeled',
+})
 const statusColor: Record<string, string> = {
   queued: 'grey-5', running: 'secondary', completed: 'positive', failed: 'negative', cancelled: 'warning',
 }

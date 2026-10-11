@@ -23,7 +23,7 @@ from redis import Redis
 from rq import Queue, Worker
 from sqlalchemy import inspect, select
 
-from odcore.db import ModelVersion, TrainingRun, TrainingStatus, utcnow
+from odcore.db import BatchStatus, ModelBenchmark, ModelVersion, TrainingRun, TrainingStatus, utcnow
 from odcore.snapshots import convert_legacy_snapshots, release_snapshot, release_unneeded_snapshots
 
 from .config import get_settings
@@ -88,6 +88,28 @@ class TrainerWorker(Worker):
                     finish_training_run(int(job.args[0]))
                 except Exception:
                     log.exception("clean-up after training job %s failed", job.id)
+            elif job.func_name == "trainer.worker.run_benchmark_job" and job.args:
+                try:
+                    finish_benchmark(int(job.args[0]))
+                except Exception:
+                    log.exception("clean-up after benchmark job %s failed", job.id)
+
+
+def run_benchmark_job(benchmark_id: int) -> None:
+    session_factory().kw["bind"].dispose(close=False)
+    try:
+        _run_subprocess("benchmark", str(benchmark_id))
+    finally:
+        finish_benchmark(benchmark_id)
+
+
+def finish_benchmark(benchmark_id: int) -> None:
+    """The benchmark process ended in any way: record a missing failure (killed process)."""
+    with session_factory()() as session:
+        b = session.get(ModelBenchmark, benchmark_id)
+        if b is not None and b.status in (BatchStatus.queued, BatchStatus.running):
+            b.status, b.error, b.finished_at = BatchStatus.failed, "benchmark process terminated unexpectedly", utcnow()
+            session.commit()
 
 
 def run_bootstrap_job(force: bool = False, base_id: str = "rtmdet-s-coco") -> None:
@@ -114,6 +136,8 @@ def wait_for_dependencies(timeout: float = 300) -> None:
 
 def fail_stale_runs() -> None:
     with session_factory()() as session:
+        for b in session.execute(select(ModelBenchmark).where(ModelBenchmark.status == BatchStatus.running)).scalars():
+            b.status, b.error, b.finished_at = BatchStatus.failed, "worker restarted during the benchmark", utcnow()
         stale = session.execute(select(TrainingRun).where(TrainingRun.status == TrainingStatus.running)).scalars().all()
         for run in stale:
             log.warning("marking training run %s as failed (worker restarted during training)", run.id)

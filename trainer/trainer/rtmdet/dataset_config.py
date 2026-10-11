@@ -118,7 +118,7 @@ def build_config(p: TrainParams):
     )
     cfg.test_dataloader = cfg.val_dataloader
     cfg.val_evaluator = dict(
-        type="CocoMetric",
+        type="DetailedCocoMetric",  # trainer.rtmdet.metric: + mAP per class and box size for the epoch chart
         ann_file=f"{p.data_root}/annotations/val.json",
         metric="bbox",
         classwise=True,

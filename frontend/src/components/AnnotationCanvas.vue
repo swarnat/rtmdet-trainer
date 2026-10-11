@@ -15,6 +15,11 @@
       </v-layer>
       <v-layer>
         <template v-if="showPredictions">
+          <!-- error analysis: annotations the model missed (false negatives), drawn around the box -->
+          <template v-for="(m, i) in missed ?? []" :key="`missed-${i}`">
+            <v-rect :config="missedConfig(m)" />
+            <v-text :config="missedLabel(m)" />
+          </template>
           <BoundingBox
             v-for="p in predictions"
             :key="p.uid"
@@ -69,6 +74,8 @@ const props = defineProps<{
   selectedId: string | null
   activeClass: ClassName
   showPredictions: boolean
+  /** error analysis: annotation boxes the model did not detect */
+  missed?: { x1: number; y1: number; x2: number; y2: number }[]
 }>()
 
 const emit = defineEmits<{
@@ -120,6 +127,33 @@ const draftConfig = computed(() => {
     listening: false,
   }
 })
+
+const MISSED_COLOR = '#ff1744'
+function missedConfig(m: { x1: number; y1: number; x2: number; y2: number }) {
+  const pad = 4 / view.scale
+  return {
+    x: m.x1 - pad,
+    y: m.y1 - pad,
+    width: m.x2 - m.x1 + 2 * pad,
+    height: m.y2 - m.y1 + 2 * pad,
+    stroke: MISSED_COLOR,
+    strokeWidth: 3,
+    strokeScaleEnabled: false,
+    dash: [3 / view.scale, 3 / view.scale],
+    listening: false,
+  }
+}
+function missedLabel(m: { x1: number; y1: number; x2: number; y2: number }) {
+  return {
+    x: m.x1 - 4 / view.scale,
+    y: m.y2 + 6 / view.scale,
+    text: 'nicht erkannt',
+    fontSize: 12 / view.scale,
+    fontStyle: 'bold',
+    fill: MISSED_COLOR,
+    listening: false,
+  }
+}
 
 const transformerConfig = computed(() => ({
   rotateEnabled: false,

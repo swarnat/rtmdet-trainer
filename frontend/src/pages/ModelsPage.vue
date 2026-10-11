@@ -80,6 +80,8 @@
       </q-table>
     </q-card>
 
+    <BenchmarkCard />
+
     <q-dialog :model-value="!!detail" @update:model-value="(v) => !v && (detail = null)">
       <q-card v-if="detail" style="width: 900px; max-width: 95vw">
         <q-card-section class="row items-center q-gutter-sm">
@@ -131,6 +133,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { useQuasar, type QTableColumn } from 'quasar'
+import BenchmarkCard from '@/components/BenchmarkCard.vue'
 import HelpIcon from '@/components/HelpIcon.vue'
 import MetricsTable from '@/components/MetricsTable.vue'
 import type { GlossaryTerm } from '@/glossary'
