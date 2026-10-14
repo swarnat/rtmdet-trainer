@@ -28,9 +28,13 @@ def download_image(url: str) -> bytes:
     """
     if urlsplit(url).scheme not in ("http", "https"):
         raise DownloadError("only http(s) URLs are supported")
-    limit = get_settings().max_upload_mb * 1024 * 1024
+    settings = get_settings()
+    limit = settings.max_upload_mb * 1024 * 1024
+    proxy = settings.download_proxy or None
     try:
-        with httpx.stream("GET", url, timeout=TIMEOUT, follow_redirects=True, headers={"User-Agent": USER_AGENT}) as res:
+        with httpx.stream(
+            "GET", url, timeout=TIMEOUT, follow_redirects=True, headers={"User-Agent": USER_AGENT}, proxy=proxy
+        ) as res:
             if res.status_code >= 400:
                 raise DownloadError(f"HTTP {res.status_code}")
             if int(res.headers.get("content-length") or 0) > limit:

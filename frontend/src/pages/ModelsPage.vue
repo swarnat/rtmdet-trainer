@@ -5,7 +5,8 @@
         <div class="text-h6">Modellversionen</div>
         <div class="text-caption text-muted">
           Versionen sind unveränderlich. Aktivieren wirkt sofort für <span class="mono">/detect</span>; die bisherige Production-Version wird archiviert
-          und kann jederzeit wieder aktiviert werden (Rollback).
+          und kann jederzeit wieder aktiviert werden (Rollback). Kennzahlen vom Validierungsset zum Trainingszeitpunkt – vergleichbar sind
+          sie nur im „Vergleich auf aktuellem Validierungsset“ unten.
         </div>
         <q-space />
         <q-chip v-if="deployment?.model" dense outline color="primary" icon="cloud_done">
@@ -131,7 +132,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useQuasar, type QTableColumn } from 'quasar'
 import BenchmarkCard from '@/components/BenchmarkCard.vue'
 import HelpIcon from '@/components/HelpIcon.vue'
@@ -140,6 +141,8 @@ import type { GlossaryTerm } from '@/glossary'
 import { api, errorMessage, fmtDate, fmtPct, type CocoBaseModel, type DeploymentStatus, type ModelVersion } from '@/services/api'
 import { useClassesStore } from '@/stores/classes'
 import { useModelsStore } from '@/stores/models'
+import { focusPerClass, missedText } from '@/services/focus'
+import { useUiStore } from '@/stores/ui'
 
 const $q = useQuasar()
 const models = useModelsStore()
@@ -189,29 +192,39 @@ const artifacts = [
   { id: 'openvino-bin', label: 'OpenVINO .bin' },
   { id: 'config', label: 'Training-Config' },
 ]
-const columns: QTableColumn<ModelVersion>[] = [
+const ui = useUiStore()
+// stored metrics are from each model's validation set at training time (see the comparison below for comparable values)
+const columns = computed<QTableColumn<ModelVersion>[]>(() => [
   { name: 'version', label: 'Version', field: 'version', align: 'left', sortable: true },
   { name: 'status', label: 'Status', field: 'status', align: 'left' },
   { name: 'arch', label: 'Architektur', field: 'architecture', align: 'left' },
   { name: 'kind', label: 'Art', field: (m) => (m.kind === 'coco-bootstrap' ? 'COCO' : 'trainiert'), align: 'left' },
   { name: 'classes', label: 'Klassen', field: (m) => m.class_names.join(', '), align: 'left' },
   { name: 'res', label: 'Auflösung', field: (m) => `${m.input_width}×${m.input_height}`, align: 'left' },
-  { name: 'p', label: 'Precision', field: (m) => fmtPct(m.metrics_json?.overall?.precision) },
-  { name: 'r', label: 'Recall', field: (m) => fmtPct(m.metrics_json?.overall?.recall) },
-  { name: 'map50', label: 'mAP50', field: (m) => fmtPct(m.metrics_json?.overall?.mAP50) },
-  { name: 'map', label: 'mAP50-95', field: (m) => fmtPct(m.metrics_json?.overall?.['mAP50-95']) },
+  { name: 'missed', label: 'Nicht erkannt Person', field: (m) => missedText(focusPerClass(m.metrics_json)), classes: 'focus-col', headerClasses: 'focus-col' },
+  { name: 'pmap', label: 'mAP50-95 Person', field: (m) => fmtPct(focusPerClass(m.metrics_json)?.['mAP50-95']), classes: 'focus-col', headerClasses: 'focus-col' },
+  { name: 'pmap50', label: 'mAP50 Person', field: (m) => fmtPct(focusPerClass(m.metrics_json)?.mAP50), classes: 'focus-col', headerClasses: 'focus-col' },
+  ...(ui.advanced
+    ? ([
+        { name: 'p', label: 'Precision gesamt', field: (m) => fmtPct(m.metrics_json?.overall?.precision) },
+        { name: 'r', label: 'Recall gesamt', field: (m) => fmtPct(m.metrics_json?.overall?.recall) },
+        { name: 'map', label: 'mAP50-95 gesamt', field: (m) => fmtPct(m.metrics_json?.overall?.['mAP50-95']) },
+      ] as QTableColumn<ModelVersion>[])
+    : []),
   { name: 'created', label: 'Erstellt', field: (m) => fmtDate(m.created_at), align: 'left' },
   { name: 'actions', label: '', field: 'id', align: 'right' },
-]
+])
 
 const columnHelp: Record<string, GlossaryTerm> = {
   status: 'status',
   arch: 'architecture',
   kind: 'kind',
   res: 'resolution',
+  missed: 'missed',
+  pmap: 'mAP5095',
+  pmap50: 'mAP50',
   p: 'precision',
   r: 'recall',
-  map50: 'mAP50',
   map: 'mAP5095',
 }
 

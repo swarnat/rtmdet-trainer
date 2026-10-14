@@ -10,6 +10,7 @@
           <q-route-tab to="/" exact label="Dashboard" />
           <q-route-tab :to="{ name: 'annotate' }" label="Annotation" />
           <q-route-tab to="/review" label="Sichtung" />
+          <q-route-tab to="/annotation-review" label="Kontrolle" />
           <q-route-tab to="/duplicates" label="Duplikate" />
           <q-route-tab to="/training" label="Training" />
           <q-route-tab to="/models" label="Modelle" />

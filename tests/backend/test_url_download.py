@@ -109,6 +109,21 @@ def test_download_errors_are_reported_per_url(env, url, error):
 
 def test_download_respects_size_limit(env, monkeypatch):
     client, _, _ = env
-    monkeypatch.setattr(url_download, "get_settings", lambda: type("S", (), {"max_upload_mb": 0})())
+    monkeypatch.setattr(url_download, "get_settings", lambda: type("S", (), {"max_upload_mb": 0, "download_proxy": None})())
     r = post(client, "http://cam.local/b.jpg")
     assert r["status"] == "error" and "exceeds" in r["error"]
+
+
+@pytest.mark.parametrize("configured, expected", [("http://proxy.local:8888", "http://proxy.local:8888"), ("", None)])
+def test_download_uses_configured_proxy(env, monkeypatch, configured, expected):
+    client, _, _ = env
+    monkeypatch.setattr(url_download, "get_settings", lambda: type("S", (), {"max_upload_mb": 50, "download_proxy": configured})())
+    mocked, proxies = url_download.httpx.stream, []
+
+    def stream(method, url, **kw):
+        proxies.append(kw.get("proxy"))
+        return mocked(method, url, **kw)
+
+    monkeypatch.setattr(url_download.httpx, "stream", stream)
+    assert post(client, "http://cam.local/b.jpg")["status"] == "created"
+    assert proxies == [expected]

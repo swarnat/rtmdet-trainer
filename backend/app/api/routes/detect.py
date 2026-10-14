@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import logging
 from typing import Annotated, Optional
 
@@ -11,7 +12,9 @@ from odcore.geometry import decode_image
 
 from app.api.deps import read_upload
 from app.core.database import get_db
-from app.schemas.detection import DetectResponse
+from app.schemas.detection import DetectResponse, DetectUrlRequest, DetectUrlResponse
+from app.services.preprocessing import decode_upload
+from app.services.url_download import DownloadError, download_image
 from app.services.inference import InvalidRequestError, run_detection
 from app.services.model_registry import ModelNotFoundError, ModelRegistry, get_registry
 
@@ -54,3 +57,25 @@ async def detect(
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     return await run_in_threadpool(detect_or_http_error, session, registry, decoded, model, input_size, confidence)
+
+
+@router.post(
+    "/detect/url",
+    response_model=DetectUrlResponse,
+    summary="Download an image from a URL and run detection on it",
+    description=(
+        "Like `/detect`, but the API downloads the image itself (works for camera URLs only reachable from the server, "
+        "no CORS). The image is not stored; it is returned as data URL for display."
+    ),
+)
+def detect_url(body: DetectUrlRequest, session: Session = Depends(get_db),
+               registry: ModelRegistry = Depends(get_registry)) -> DetectUrlResponse:
+    try:
+        decoded = decode_upload(download_image(body.url.strip()))
+    except DownloadError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"download failed: {exc}") from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    result = detect_or_http_error(session, registry, decoded.image, body.model, body.input_size, body.confidence)
+    data_url = f"data:{decoded.content_type};base64,{base64.b64encode(decoded.data).decode('ascii')}"
+    return DetectUrlResponse(**result.model_dump(), image_data_url=data_url)

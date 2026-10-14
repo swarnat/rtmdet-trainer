@@ -1,55 +1,82 @@
 <template>
   <div v-if="metrics?.overall">
+    <!-- missed objects of the focus class: the worst error, shown on its own -->
+    <div v-if="focus && focusSet" class="missed q-pa-sm q-mb-md rounded-borders row items-center q-gutter-x-md">
+      <q-icon name="person_off" color="negative" size="28px" />
+      <div>
+        <div class="text-caption text-muted">Nicht erkannte {{ focusLabel }}en<HelpIcon term="benchmarkMissed" inline /></div>
+        <div class="text-h6 text-weight-bold" :class="focusSet.fn ? 'text-negative' : 'text-positive'">{{ missedText(focusSet) }}</div>
+      </div>
+      <div v-if="focusBase" class="column">
+        <div class="text-caption text-muted">{{ metrics.comparison?.baseline_model }} (Production, gleiche Bilder)</div>
+        <div class="text-subtitle1">{{ missedText(focusBase) }}</div>
+      </div>
+      <q-chip
+        v-if="missedDelta !== null"
+        dense
+        :color="missedDelta < 0 ? 'positive' : missedDelta > 0 ? 'negative' : 'grey-7'"
+        text-color="white"
+        :icon="missedDelta < 0 ? 'trending_down' : missedDelta > 0 ? 'trending_up' : 'trending_flat'"
+      >
+        {{ missedDelta === 0 ? 'gleich viele' : `${Math.abs(missedDelta)} ${missedDelta < 0 ? 'weniger' : 'mehr'} übersehen` }}
+      </q-chip>
+    </div>
+
     <q-markup-table dense flat bordered separator="cell" class="q-mb-sm">
       <thead>
         <tr>
           <th class="text-left">Klasse</th>
-          <th>Precision<HelpIcon term="precision" inline /></th>
+          <th class="focus-col">Nicht erkannt<HelpIcon term="missed" inline /></th>
+          <th class="focus-col">mAP50-95<HelpIcon term="mAP5095" inline /></th>
+          <th class="focus-col">mAP50<HelpIcon term="mAP50" inline /></th>
           <th>Recall<HelpIcon term="recall" inline /></th>
-          <th>mAP50<HelpIcon term="mAP50" inline /></th>
-          <th>mAP50-95<HelpIcon term="mAP5095" inline /></th>
-          <th>mAP50-95 klein<HelpIcon term="mAPSmall" inline /></th>
-          <th>TP / FP / FN<HelpIcon term="tpFpFn" inline /></th>
+          <th>Precision<HelpIcon term="precision" inline /></th>
+          <th>Fehlalarme<HelpIcon term="falseAlarms" inline /></th>
+          <th v-if="ui.advanced">mAP50-95 klein<HelpIcon term="mAPSmall" inline /></th>
         </tr>
       </thead>
       <tbody>
-        <tr class="text-weight-bold">
-          <td class="text-left">Gesamt</td>
-          <td class="text-right">{{ fmtPct(metrics.overall.precision) }}</td>
-          <td class="text-right">{{ fmtPct(metrics.overall.recall) }}</td>
-          <td class="text-right">{{ fmtPct(metrics.overall.mAP50) }}</td>
-          <td class="text-right">{{ fmtPct(metrics.overall['mAP50-95']) }}</td>
-          <td class="text-right">{{ fmtPct(metrics.per_size?.small?.['mAP50-95']) }}</td>
-          <td class="text-right">{{ counts(metrics.overall) }}</td>
-        </tr>
-        <tr v-for="c in rows" :key="c.name">
+        <tr v-for="c in rows" :key="c.name" :class="{ 'text-weight-bold': c.name === focus }">
           <td class="text-left"><span class="class-dot" :style="{ background: c.color }" />{{ c.label }}</td>
-          <td class="text-right">{{ fmtPct(metrics.per_class?.[c.name]?.precision) }}</td>
-          <td class="text-right">{{ fmtPct(metrics.per_class?.[c.name]?.recall) }}</td>
-          <td class="text-right">{{ fmtPct(metrics.per_class?.[c.name]?.mAP50) }}</td>
-          <td class="text-right">{{ fmtPct(metrics.per_class?.[c.name]?.['mAP50-95']) }}</td>
-          <td class="text-right">{{ fmtPct(metrics.per_class?.[c.name]?.small?.['mAP50-95']) }}</td>
-          <td class="text-right">{{ counts(metrics.per_class?.[c.name]) }}</td>
+          <td class="text-right focus-col" :class="{ 'text-negative': c.name === focus && c.set?.fn }">{{ missedText(c.set) }}</td>
+          <td class="text-right focus-col">{{ fmtPct(c.set?.['mAP50-95']) }}</td>
+          <td class="text-right focus-col">{{ fmtPct(c.set?.mAP50) }}</td>
+          <td class="text-right">{{ fmtPct(c.set?.recall) }}</td>
+          <td class="text-right">{{ fmtPct(c.set?.precision) }}</td>
+          <td class="text-right">{{ c.set?.fp ?? '–' }}</td>
+          <td v-if="ui.advanced" class="text-right">{{ fmtPct(c.set?.small?.['mAP50-95']) }}</td>
+        </tr>
+        <tr class="text-muted">
+          <td class="text-left">Alle Klassen</td>
+          <td class="text-right focus-col">{{ missedText(metrics.overall) }}</td>
+          <td class="text-right focus-col">{{ fmtPct(metrics.overall['mAP50-95']) }}</td>
+          <td class="text-right focus-col">{{ fmtPct(metrics.overall.mAP50) }}</td>
+          <td class="text-right">{{ fmtPct(metrics.overall.recall) }}</td>
+          <td class="text-right">{{ fmtPct(metrics.overall.precision) }}</td>
+          <td class="text-right">{{ metrics.overall.fp ?? '–' }}</td>
+          <td v-if="ui.advanced" class="text-right">{{ fmtPct(metrics.per_size?.small?.['mAP50-95']) }}</td>
         </tr>
       </tbody>
     </q-markup-table>
-    <q-markup-table v-if="metrics.per_size" dense flat bordered separator="cell">
+    <q-markup-table v-if="metrics.per_size && ui.advanced" dense flat bordered separator="cell">
       <thead>
         <tr>
           <th class="text-left">Boxgröße (Originalpixel)<HelpIcon term="boxSize" inline /></th>
-          <th>Precision<HelpIcon term="precision" inline /></th>
-          <th>Recall<HelpIcon term="recall" inline /></th>
-          <th>mAP50<HelpIcon term="mAP50" inline /></th>
+          <th>Nicht erkannt<HelpIcon term="missed" inline /></th>
           <th>mAP50-95<HelpIcon term="mAP5095" inline /></th>
+          <th>mAP50<HelpIcon term="mAP50" inline /></th>
+          <th>Recall<HelpIcon term="recall" inline /></th>
+          <th>Precision<HelpIcon term="precision" inline /></th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="(label, key) in SIZES" :key="key">
           <td class="text-left">{{ label }}</td>
-          <td class="text-right">{{ fmtPct(metrics.per_size[key]?.precision) }}</td>
-          <td class="text-right">{{ fmtPct(metrics.per_size[key]?.recall) }}</td>
-          <td class="text-right">{{ fmtPct(metrics.per_size[key]?.mAP50) }}</td>
+          <td class="text-right">{{ missedText(metrics.per_size[key]) }}</td>
           <td class="text-right">{{ fmtPct(metrics.per_size[key]?.['mAP50-95']) }}</td>
+          <td class="text-right">{{ fmtPct(metrics.per_size[key]?.mAP50) }}</td>
+          <td class="text-right">{{ fmtPct(metrics.per_size[key]?.recall) }}</td>
+          <td class="text-right">{{ fmtPct(metrics.per_size[key]?.precision) }}</td>
         </tr>
       </tbody>
     </q-markup-table>
@@ -60,7 +87,7 @@
           <tr>
             <th class="text-left">Klasse</th>
             <th>Hard Negatives</th>
-            <th>weiterhin falsch erkannt<HelpIcon term="hnStillDetected" inline /></th>
+            <th>noch erkannt<HelpIcon term="hnStillDetected" inline /></th>
             <th>HN-FP-Rate<HelpIcon term="hnFpRate" inline /></th>
           </tr>
         </thead>
@@ -86,7 +113,7 @@
         </tbody>
       </q-markup-table>
       <div class="text-caption text-muted">
-        „Weiterhin falsch erkannt“ = gleiche Klasse mit Confidence ≥ {{ metrics.hard_negatives.confidence }} und IoU ≥
+        „Noch erkannt“ = gleiche Klasse mit Confidence ≥ {{ metrics.hard_negatives.confidence }} und IoU ≥
         {{ metrics.hard_negatives.iou }} zur gespeicherten Box. Immer zusammen mit Recall/Precision bewerten.
       </div>
     </template>
@@ -94,32 +121,36 @@
     <template v-if="metrics.comparison">
       <div class="text-subtitle2 q-mt-md">Vergleich mit {{ metrics.comparison.baseline_model }} (aktuelles Production-Modell, gleiche Daten)<HelpIcon term="delta" inline /></div>
       <q-banner v-for="w in metrics.comparison.warnings" :key="w" dense rounded class="bg-amber-soft q-mb-xs text-body2">
-        <template #avatar><q-icon name="warning" color="warning" /></template>{{ w }}
+        <template #avatar><q-icon name="warning" color="warning" /></template>{{ warningText(w) }}
       </q-banner>
       <q-markup-table dense flat bordered separator="cell">
         <thead>
           <tr>
             <th class="text-left">Klasse</th>
-            <th>Val-Boxen</th>
+            <th class="focus-col">
+              Nicht erkannt<HelpIcon term="missed" inline />
+              <div class="text-caption text-muted">neu ← {{ metrics.comparison.baseline_model }}</div>
+            </th>
+            <th class="focus-col">mAP50-95 Δ<HelpIcon term="mAP5095" inline /></th>
+            <th class="focus-col">mAP50 Δ<HelpIcon term="mAP50" inline /></th>
             <th>Recall Δ<HelpIcon term="recall" inline /></th>
             <th>Precision Δ<HelpIcon term="precision" inline /></th>
-            <th>mAP50 Δ<HelpIcon term="mAP50" inline /></th>
-            <th>mAP50-95 Δ<HelpIcon term="mAP5095" inline /></th>
-            <th>TP / FP / FN<HelpIcon term="tpFpFn" inline /><div class="text-caption text-muted">neu ← {{ metrics.comparison.baseline_model }}</div></th>
+            <th>
+              Fehlalarme<HelpIcon term="falseAlarms" inline />
+              <div class="text-caption text-muted">neu ← {{ metrics.comparison.baseline_model }}</div>
+            </th>
             <th>
               HN-FP-Rate Δ<HelpIcon term="hnFpRate" inline />
               <div class="text-caption text-muted">nur Validierung</div>
-              <q-tooltip>Darunter: Hard Negatives, die weiterhin erkannt werden (neu ← {{ metrics.comparison.baseline_model }})</q-tooltip>
+              <q-tooltip>Darunter: Hard Negatives, die noch erkannt werden (neu ← {{ metrics.comparison.baseline_model }})</q-tooltip>
             </th>
+            <th v-if="ui.advanced">TP / FP / FN<HelpIcon term="tpFpFn" inline /><div class="text-caption text-muted">neu ← {{ metrics.comparison.baseline_model }}</div></th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="r in comparisonRows" :key="r.key" :class="{ 'text-weight-bold': r.key === '_overall' }">
+          <tr v-for="r in comparisonRows" :key="r.key" :class="{ 'text-weight-bold': r.key === focus, 'text-muted': r.key === '_overall' }">
             <td class="text-left">
               <span v-if="r.color" class="class-dot" :style="{ background: r.color }" />{{ r.label }}
-            </td>
-            <td class="text-right">
-              {{ r.boxes ?? '–' }}
               <q-badge v-if="!r.reliable" outline color="warning" class="q-ml-xs" label="wenig Daten">
                 <q-tooltip max-width="320px">
                   Nur {{ r.boxes ?? 0 }} Validierungsboxen (empfohlen ≥ {{ minBoxes }}). Eine Box mehr oder weniger ändert den Recall
@@ -127,11 +158,19 @@
                 </q-tooltip>
               </q-badge>
             </td>
+            <td class="text-right text-no-wrap focus-col">
+              <span :class="countClass(r.next?.fn, r.base?.fn)">{{ r.next?.fn ?? '–' }}</span>
+              <span class="text-muted"> ← {{ r.base?.fn ?? '–' }}</span>
+              <span class="text-caption text-muted"> von {{ r.boxes ?? '–' }}</span>
+            </td>
+            <td class="text-right focus-col" :class="deltaClass(r.delta['mAP50-95'], false, r.reliable)">{{ fmtDelta(r.delta['mAP50-95']) }}</td>
+            <td class="text-right focus-col" :class="deltaClass(r.delta.mAP50, false, r.reliable)">{{ fmtDelta(r.delta.mAP50) }}</td>
             <td class="text-right" :class="deltaClass(r.delta.recall, false, r.reliable)">{{ fmtDelta(r.delta.recall) }}</td>
             <td class="text-right" :class="deltaClass(r.delta.precision, false, r.reliable)">{{ fmtDelta(r.delta.precision) }}</td>
-            <td class="text-right" :class="deltaClass(r.delta.mAP50, false, r.reliable)">{{ fmtDelta(r.delta.mAP50) }}</td>
-            <td class="text-right" :class="deltaClass(r.delta['mAP50-95'], false, r.reliable)">{{ fmtDelta(r.delta['mAP50-95']) }}</td>
-            <td class="text-right text-no-wrap">{{ counts(r.next) }} <span class="text-muted">← {{ counts(r.base) }}</span></td>
+            <td class="text-right text-no-wrap">
+              <span :class="countClass(r.next?.fp, r.base?.fp)">{{ r.next?.fp ?? '–' }}</span>
+              <span class="text-muted"> ← {{ r.base?.fp ?? '–' }}</span>
+            </td>
             <td v-if="r.hnLegacy" class="text-right text-muted">
               –*
               <q-tooltip max-width="320px">
@@ -143,17 +182,18 @@
               <span :class="deltaClass(r.hnDelta, true, r.hnReliable)">{{ fmtDelta(r.hnDelta) }}</span>
               <div v-if="r.hnNew || r.hnBase" class="text-caption text-muted">{{ hnCount(r.hnNew) }} ← {{ hnCount(r.hnBase) }}</div>
             </td>
+            <td v-if="ui.advanced" class="text-right text-no-wrap">{{ counts(r.next) }} <span class="text-muted">← {{ counts(r.base) }}</span></td>
           </tr>
         </tbody>
       </q-markup-table>
       <div class="text-caption text-muted">
-        Δ in Prozentpunkten (neu − {{ metrics.comparison.baseline_model }}); grün = besser. Farbig bewertet nur ab {{ minBoxes }}
+        Δ in Prozentpunkten (neu − {{ metrics.comparison.baseline_model }}); grün = besser. Nicht erkannt und Fehlalarme als Anzahl (neu ← alt), weniger ist besser. Farbig bewertet nur ab {{ minBoxes }}
         Validierungsboxen bzw. {{ minBoxes }} Hard Negatives, darunter ist der Unterschied meist Zufall. Die HN-FP-Rate wird nur auf
         Validierungsbildern verglichen: Hard Negatives auf Trainingsbildern hat das neue Modell als Ausschnitte gelernt.
         Nur Klassen, die beide Modelle kennen.
         <template v-if="comparisonRows.some((r) => r.hnLegacy)">
           <br />* Vor dieser Korrektur trainiert: Pro Klasse ist nur der Wert inklusive Trainingsbildern gespeichert, der das neue Modell
-          bevorzugt (Wert im Tooltip). Die Zeile „Gesamt“ ist bereits fair.
+          bevorzugt (Wert im Tooltip). Die Zeile „Alle Klassen“ ist bereits fair.
         </template>
       </div>
     </template>
@@ -171,12 +211,36 @@
 import { computed } from 'vue'
 import HelpIcon from './HelpIcon.vue'
 import { fmtPct, type HardNegativeBucket, type MetricSet, type Metrics } from '@/services/api'
+import { boxesOf, focusClassOf, missedText } from '@/services/focus'
 import { useClassesStore } from '@/stores/classes'
+import { useUiStore } from '@/stores/ui'
 
 const props = defineProps<{ metrics: Metrics | null | undefined }>()
 const classes = useClassesStore()
-// rows = classes of the evaluated model (not the currently configured ones)
-const rows = computed(() => Object.keys(props.metrics?.per_class ?? {}).map((n) => classes.info(n)))
+const ui = useUiStore()
+
+const focus = computed(() => focusClassOf(props.metrics))
+const focusLabel = computed(() => (focus.value ? classes.info(focus.value).label : ''))
+const focusSet = computed(() => (focus.value ? props.metrics?.per_class?.[focus.value] ?? null : null))
+const focusBase = computed(() => (focus.value ? props.metrics?.comparison?.baseline.per_class?.[focus.value] ?? null : null))
+const missedDelta = computed(() => (focusSet.value?.fn != null && focusBase.value?.fn != null ? focusSet.value.fn - focusBase.value.fn : null))
+
+/** focus class first; rows = classes of the evaluated model (not the currently configured ones) */
+function focusFirst(names: string[]) {
+  return [...names].sort((a, b) => Number(b === focus.value) - Number(a === focus.value))
+}
+// classes without validation boxes (e.g. bicycle) have no values: left out
+const rows = computed(() =>
+  focusFirst(Object.keys(props.metrics?.per_class ?? {}))
+    .map((n) => ({ ...classes.info(n), set: props.metrics?.per_class?.[n] ?? null }))
+    .filter((r) => boxesOf(r.set) !== 0),
+)
+
+/** counts where fewer is better (missed, false alarms): green if fewer than the baseline, red if more */
+function countClass(next: number | null | undefined, base: number | null | undefined) {
+  if (next == null || base == null || next === base) return ''
+  return next < base ? 'text-positive text-weight-bold' : 'text-negative text-weight-bold'
+}
 
 const SIZES = { small: 'klein (< 32²)', medium: 'mittel (32²–96²)', large: 'groß (> 96²)' } as const
 
@@ -221,7 +285,7 @@ const comparisonRows = computed(() => {
     hnDelta: number | null,
     hnLegacy: boolean,
   ) => {
-    const boxes = next?.tp != null && next?.fn != null ? next.tp + next.fn : null
+    const boxes = boxesOf(next)
     const hnTotal = Math.min(hnNew?.total ?? 0, hnBase?.total ?? 0)
     return {
       key, label, color, next, base, delta, boxes, hnNew, hnBase, hnDelta, hnLegacy,
@@ -233,20 +297,32 @@ const comparisonRows = computed(() => {
   const overallDelta = Object.fromEntries(keys.map((k) => [k, diff(m.overall?.[k], cmp.baseline.overall?.[k])])) as Record<DeltaKey, number | null>
   const hnNewAll = m.hard_negatives?.validation_only
   const hnBaseAll = cmp.baseline.hard_negatives?.validation_only
-  const rows = [
-    row('_overall', 'Gesamt', null, m.overall, cmp.baseline.overall, overallDelta,
+  const overall = [
+    row('_overall', 'Alle Klassen', null, m.overall, cmp.baseline.overall, overallDelta,
       hnNewAll?.total ? hnNewAll : undefined, hnBaseAll?.total ? hnBaseAll : undefined,
       hnNewAll?.total && hnBaseAll?.total ? diff(hnNewAll.fp_rate, hnBaseAll.fp_rate) : null, false),
   ]
-  for (const [name, d] of Object.entries(cmp.delta_per_class)) {
+  const rows: typeof overall = []
+  for (const name of focusFirst(Object.keys(cmp.delta_per_class))) {
+    const d = cmp.delta_per_class[name]
     const info = classes.info(name)
     const hnNew = fair ? m.hard_negatives?.per_class_validation?.[name] : m.hard_negatives?.per_class?.[name]
     const hnBase = fair ? cmp.baseline.hard_negatives?.per_class_validation?.[name] : cmp.baseline.hard_negatives?.per_class?.[name]
     rows.push(row(name, info.label, info.color, m.per_class?.[name], cmp.baseline.per_class?.[name], d, hnNew, hnBase,
       d.hard_negative_fp_rate, !fair && d.hard_negative_fp_rate != null))
   }
-  return rows
+  return [...rows, ...overall]
 })
+
+/** the trainer stores the warnings in English: "<class>: [fewer known false positives, but ]recall dropped by x%<note>" */
+function warningText(w: string) {
+  const m = /^(\w+): (fewer known false positives, but )?recall dropped by ([\d.]+%)(.*)$/.exec(w)
+  if (!m) return w
+  const label = classes.info(m[1]).label
+  const note = m[4].replace(/\(only (\d+) validation boxes\)/, '(nur $1 Validierungsboxen)')
+  const drop = `Recall um ${m[3].replace('.', ',')} gesunken${note} – das Modell übersieht mehr echte Objekte.`
+  return m[2] ? `${label}: weniger bekannte Fehlalarme, aber ${drop}` : `${label}: ${drop}`
+}
 
 function hnCount(b: HardNegativeBucket | undefined) {
   return b ? `${b.still_detected}/${b.total}` : '–'
@@ -256,3 +332,10 @@ function counts(m: MetricSet | null | undefined) {
   return m && m.tp != null ? `${m.tp} / ${m.fp} / ${m.fn}` : '–'
 }
 </script>
+
+<style scoped>
+.missed {
+  border: 1px solid rgba(255, 23, 68, 0.35);
+  background: rgba(255, 23, 68, 0.06);
+}
+</style>

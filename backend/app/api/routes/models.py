@@ -89,7 +89,7 @@ def benchmark_out(b: ModelBenchmark) -> BenchmarkOut:
     "/benchmarks",
     response_model=BenchmarkOut,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Evaluate all model versions on the current validation set",
+    summary="Evaluate all non-archived model versions on the current validation set",
     description="Runs in the trainer (queued behind trainings). Same protocol as the training evaluation, each model "
     "at its own input size; results are comparable between models, unlike the metrics stored at training time.",
 )

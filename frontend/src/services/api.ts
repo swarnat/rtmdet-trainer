@@ -83,6 +83,25 @@ export interface DuplicateGroup {
   duplicates: ImageItem[]
 }
 
+/** One annotated box for the annotation review (crop = box + margin, clipped to the image) */
+export interface ReviewCrop {
+  id: number
+  image_id: number
+  class: ClassName
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  type: AnnotationType
+  source: 'manual' | 'prediction'
+  image_width: number
+  image_height: number
+  dataset_split: 'train' | 'validation' | null
+  updated_at: string
+}
+
+export type ReviewSort = 'newest' | 'oldest' | 'smallest' | 'largest' | 'widest' | 'tallest' | 'image'
+
 /** Open images without suggestions of one camera view, for the quick review */
 export interface CameraGroup {
   /** camera identity from the metadata, e.g. "AXIS Q3536-LVE · B8A44F55F126" ("" = unknown or switched off) */
@@ -548,6 +567,14 @@ export const api = {
   startBenchmark: () => request<Benchmark>('/models/benchmarks', { method: 'POST' }),
   latestBenchmark: () => request<Benchmark | null>('/models/benchmarks/latest'),
   cameraGroups: () => request<{ groups: CameraGroup[]; untested: number }>('/images/camera-groups'),
+  reviewClasses: () => request<{ class: ClassName; positive: number; hard_negative: number }[]>('/annotations/review/classes'),
+  reviewCrops: (p: { class: string; type: AnnotationType; split?: string; sort: ReviewSort; offset: number; limit: number }) => {
+    const q = new URLSearchParams({ class: p.class, type: p.type, sort: p.sort, offset: String(p.offset), limit: String(p.limit) })
+    if (p.split) q.set('split', p.split)
+    return request<{ total: number; margin: number; items: ReviewCrop[] }>(`/annotations/review?${q}`)
+  },
+  /** updated_at in the URL: an edited box gets a new URL (the crop is cached by the browser) */
+  cropUrl: (c: ReviewCrop) => `${BASE}/annotations/${c.id}/crop?v=${encodeURIComponent(c.updated_at)}`,
   duplicateGroups: () => request<DuplicateGroup[]>('/images/duplicates/groups'),
   resolveDuplicates: (body: { keep: number[]; delete: number[] }) =>
     request<{ kept: number; deleted: number }>('/images/duplicates/resolve', json('POST', body)),
@@ -564,6 +591,9 @@ export const api = {
     form.append('image', file, file.name)
     return request<DetectResponse>('/detect', { method: 'POST', body: detectForm(opts, form) })
   },
+  /** the API downloads the image (camera URLs reachable only from the server, no CORS); returned as data URL, not stored */
+  detectUrl: (url: string, opts: DetectOptions) =>
+    request<DetectResponse & { image_data_url: string }>('/detect/url', json('POST', { url, ...opts })),
 
   // training
   baseModels: () => request<BaseModelOption[]>('/training/base-models'),

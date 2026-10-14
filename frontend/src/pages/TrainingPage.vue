@@ -289,6 +289,7 @@ import { GLOSSARY, type GlossaryTerm } from '@/glossary'
 import { api, errorMessage, fmtDate, fmtPct, type BaseModelOption, type BatchScope, type BatchTest, type DatasetStats, type TrainerGpuStatus, type TrainingEligibility, type TrainingRun } from '@/services/api'
 import { useClassesStore } from '@/stores/classes'
 import { useModelsStore } from '@/stores/models'
+import { focusPerClass, missedText } from '@/services/focus'
 
 const $q = useQuasar()
 const router = useRouter()
@@ -359,7 +360,7 @@ watch(
 )
 
 const statusColor: Record<string, string> = { queued: 'grey-5', running: 'primary', completed: 'positive', failed: 'negative' }
-const columnHelp: Record<string, GlossaryTerm> = { status: 'runStatus', base: 'base', res: 'resolution', epochs: 'epoch', map: 'mAP50' }
+const columnHelp: Record<string, GlossaryTerm> = { status: 'runStatus', base: 'base', res: 'resolution', epochs: 'epoch', missed: 'missed', map: 'mAP5095', map50: 'mAP50' }
 const columns: QTableColumn<TrainingRun>[] = [
   { name: 'id', label: '#', field: 'id', align: 'left', sortable: true },
   { name: 'status', label: 'Status', field: 'status', align: 'left' },
@@ -367,7 +368,9 @@ const columns: QTableColumn<TrainingRun>[] = [
   { name: 'classes', label: 'Klassen', field: (r) => (r.class_names ?? []).join(', '), align: 'left' },
   { name: 'res', label: 'Auflösung', field: (r) => `${r.input_width}×${r.input_height}`, align: 'left' },
   { name: 'epochs', label: 'Epochs', field: 'epochs' },
-  { name: 'map', label: 'mAP50', field: (r) => fmtPct(r.metrics_json?.overall?.mAP50) },
+  { name: 'missed', label: 'Nicht erkannt Person', field: (r) => missedText(focusPerClass(r.metrics_json)), classes: 'focus-col', headerClasses: 'focus-col' },
+  { name: 'map', label: 'mAP50-95 Person', field: (r) => fmtPct(focusPerClass(r.metrics_json)?.['mAP50-95']), classes: 'focus-col', headerClasses: 'focus-col' },
+  { name: 'map50', label: 'mAP50 Person', field: (r) => fmtPct(focusPerClass(r.metrics_json)?.mAP50), classes: 'focus-col', headerClasses: 'focus-col' },
   { name: 'progress', label: 'Fortschritt / Ergebnis', field: 'id', align: 'left' },
   { name: 'created', label: 'Erstellt', field: (r) => fmtDate(r.created_at), align: 'left' },
 ]

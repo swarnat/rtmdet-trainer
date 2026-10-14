@@ -1,8 +1,8 @@
 """Benchmark: every model version on the *current* validation set, with the training evaluation protocol.
 
 Metrics stored with each model describe its validation set at training time, which grows over time, so
-they are not comparable between models. The benchmark evaluates all model versions (exported OpenVINO
-models, each at its own input size) on today's labeled validation images and their hard negatives.
+they are not comparable between models. The benchmark evaluates all non-archived model versions (production and
+candidates; exported OpenVINO models, each at its own input size) on today's labeled validation images and their hard negatives.
 The split is persistent, but it can be changed by hand (e.g. real intrusions moved to validation): for each
 model the number of current validation images it was *trained* on is reported (``seen_in_training``, from its
 snapshot manifest) - such a model looks better than it is on those images.
@@ -17,7 +17,7 @@ import shutil
 from sqlalchemy import select
 
 from odcore.classes import active_class_names
-from odcore.db import BatchStatus, ModelBenchmark, ModelVersion, utcnow
+from odcore.db import BatchStatus, ModelBenchmark, ModelStatus, ModelVersion, utcnow
 from odcore.openvino_detector import OpenVinoDetector
 from odcore.settings_store import get_setting
 
@@ -66,9 +66,12 @@ def run_benchmark(benchmark_id: int) -> None:
             class_names = active_class_names(session)
             eval_conf = float(get_setting(session, "eval_confidence"))
             nms_iou = float(get_setting(session, "nms_iou_threshold"))
+            # archived versions are skipped: they are out of the race and each model costs a full evaluation
             models = [
                 (m.version, m.status.value, m.openvino_key, tuple(m.class_names), m.input_width, m.input_height, m.training_run_id)
-                for m in session.execute(select(ModelVersion).order_by(ModelVersion.id)).scalars() if m.openvino_key
+                for m in session.execute(
+                    select(ModelVersion).where(ModelVersion.status != ModelStatus.archived).order_by(ModelVersion.id)
+                ).scalars() if m.openvino_key
             ]
             val_dir = current_validation_set(session, s3, work, class_names)
         if not val_dir:

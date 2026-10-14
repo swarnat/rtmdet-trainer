@@ -67,10 +67,33 @@
               <div class="text-caption">Confidence {{ opts.confidence.toFixed(2) }}<HelpIcon term="confidence" inline /></div>
               <q-slider v-model="opts.confidence" :min="0.05" :max="0.95" :step="0.05" dense />
             </div>
+          </q-card-section>
+          <q-card-section class="row items-center q-gutter-md q-pt-none">
             <q-file v-model="file" dense outlined accept="image/*" label="Bild wählen" style="min-width: 220px" @update:model-value="detect">
               <template #prepend><q-icon name="image" /></template>
             </q-file>
-            <q-btn color="primary" icon="search" label="Erkennen" :disable="!file" :loading="detecting" @click="detect" />
+            <div class="text-muted">oder</div>
+            <q-input
+              v-model="url"
+              dense
+              outlined
+              clearable
+              label="Bild-URL (http/https)"
+              class="col"
+              style="min-width: 280px"
+              @keyup.enter="detectFromUrl"
+            >
+              <template #prepend><q-icon name="link" /></template>
+              <q-tooltip>Die API lädt das Bild selbst herunter – funktioniert auch für Kamera-URLs, die nur vom Server erreichbar sind.</q-tooltip>
+            </q-input>
+            <q-btn
+              color="primary"
+              icon="search"
+              label="Erkennen"
+              :disable="!file && !url?.trim()"
+              :loading="detecting"
+              @click="url?.trim() && !file ? detectFromUrl() : detect()"
+            />
           </q-card-section>
           <q-card-section v-if="result && preview" class="row q-col-gutter-md">
             <div class="col-12 col-md-8">
@@ -80,8 +103,9 @@
               <div class="text-body2 q-mb-sm">
                 {{ result.model.version }} · {{ result.model.input_width }}×{{ result.model.input_height }} · {{ result.inference_ms.toFixed(0) }} ms ·
                 {{ result.detections.length }} Treffer. Das Bild wurde nicht gespeichert.
+                <div v-if="source" class="text-caption text-muted ellipsis">Quelle: {{ source }}<q-tooltip>{{ source }}</q-tooltip></div>
               </div>
-              <pre class="log-view" style="max-height: 420px">{{ JSON.stringify(result, null, 2) }}</pre>
+              <pre class="log-view" style="max-height: 420px">{{ JSON.stringify(resultJson, null, 2) }}</pre>
             </div>
           </q-card-section>
         </q-card>
@@ -110,6 +134,14 @@ const classRows = computed(() =>
 )
 const stats = ref<DatasetStats | null>(null)
 const file = ref<File | null>(null)
+const url = ref<string | null>(stored('quicktest-url'))
+const source = ref<string | null>(null)
+// the response as /detect returns it (without the image of a URL test)
+const resultJson = computed(() => {
+  if (!result.value) return null
+  const { image_data_url: _image, ...rest } = result.value as DetectResponse & { image_data_url?: string }
+  return rest
+})
 const preview = ref<string | null>(null)
 const result = ref<DetectResponse | null>(null)
 const detecting = ref(false)
@@ -150,13 +182,48 @@ watch(
   { immediate: true },
 )
 
+function stored(key: string): string | null {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function setPreview(src: string) {
+  if (preview.value?.startsWith('blob:')) URL.revokeObjectURL(preview.value)
+  preview.value = src
+}
+
+async function detectFromUrl() {
+  const target = url.value?.trim()
+  if (!target) return
+  detecting.value = true
+  try {
+    const res = await api.detectUrl(target, opts)
+    result.value = res
+    setPreview(res.image_data_url)
+    source.value = target
+    file.value = null
+    try {
+      localStorage.setItem('quicktest-url', target) // e.g. a camera snapshot URL tested again and again
+    } catch {
+      /* storage unavailable */
+    }
+  } catch (e) {
+    $q.notify({ type: 'negative', message: errorMessage(e) })
+  } finally {
+    detecting.value = false
+  }
+}
+
 async function detect() {
   if (!file.value) return
   detecting.value = true
   try {
     result.value = await api.detectUpload(file.value, opts)
-    if (preview.value) URL.revokeObjectURL(preview.value)
-    preview.value = URL.createObjectURL(file.value)
+    setPreview(URL.createObjectURL(file.value))
+    source.value = file.value.name
   } catch (e) {
     $q.notify({ type: 'negative', message: errorMessage(e) })
   } finally {
@@ -172,5 +239,5 @@ onMounted(async () => {
     $q.notify({ type: 'negative', message: errorMessage(e) })
   }
 })
-onBeforeUnmount(() => preview.value && URL.revokeObjectURL(preview.value))
+onBeforeUnmount(() => preview.value?.startsWith('blob:') && URL.revokeObjectURL(preview.value))
 </script>

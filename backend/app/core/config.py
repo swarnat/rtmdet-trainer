@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     # Max. number of compiled (model version, resolution) pairs kept in memory
     compiled_model_cache_size: int = Field(6, alias="COMPILED_MODEL_CACHE_SIZE")
     max_upload_mb: int = Field(50, alias="MAX_UPLOAD_MB")
+    # Optional HTTP(S) proxy used only for image downloads from URLs, e.g. http://proxy-host:8888
+    download_proxy: str | None = Field(None, alias="DOWNLOAD_PROXY")
     cors_origins: str = Field("", alias="CORS_ORIGINS")
     log_level: str = Field("INFO", alias="LOG_LEVEL")
 

@@ -86,6 +86,7 @@ services:
       OPENVINO_DEVICE: CPU
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
+      DOWNLOAD_PROXY: ${DOWNLOAD_PROXY:-}
       BACKUP_DIR: /backups
     volumes:
       # cache of downloaded/compiled OpenVINO models (source of truth stays in S3)

@@ -77,9 +77,27 @@ export const GLOSSARY = {
     'Beim Annotieren kannst du die Vorschläge dann übernehmen statt alles selbst einzuzeichnen.',
   benchmark:
     'Vergleich auf aktuellem Validierungsset: Die beim Training gespeicherten Metriken gelten für das damalige Validierungsset, das ' +
-    'seitdem gewachsen ist – Werte verschiedener Modelle sind so nicht vergleichbar. Hier werden alle Modelle neu auf denselben, ' +
+    'seitdem gewachsen ist – Werte verschiedener Modelle sind so nicht vergleichbar. Hier werden alle nicht archivierten Modelle ' +
+    '(Production und Candidates) neu auf denselben, ' +
     'heutigen Validierungsbildern bewertet (exportiertes OpenVINO-Modell, eigene Auflösung, gleiche Confidence wie im Training), ' +
     'inklusive Hard-Negative-Test auf den Validierungsbildern. Läuft im Trainer, nach einem eventuell laufenden Training.',
+  annotationReview:
+    'Kontrolle: Jede annotierte Box als kleiner Ausschnitt (Box plus 20 Pixel Rand), getrennt nach Klasse – für einen schnellen ' +
+    'Überblick, ob alles passt: falsche Klasse, zu große/zu kleine oder verrutschte Boxen, zwei Objekte in einer Box. Die Sortierung ' +
+    'nach Größe oder Seitenverhältnis bringt Ausreißer nach vorn. Klick öffnet das Bild zum Korrigieren in einem neuen Tab, danach ' +
+    '„Neu laden“. „V“ = Validierungsbild.',
+  missed:
+    'Nicht erkannt (FN): Annotierte Objekte, für die das Modell bei der eingestellten Confidence keine passende Erkennung ' +
+    '(gleiche Klasse, IoU ≥ 0,5) liefert – angegeben als „x von Boxen (Anteil)“; der Anteil ist 100 % − Recall. Bei Personen der ' +
+    'schwerste Fehler: ein echter Eindringling ohne Alarm. Weniger ist besser.',
+  falseAlarms:
+    'Fehlalarme (FP): Erkennungen ohne passende annotierte Box (gleiche Klasse, IoU ≥ 0,5) bei der eingestellten Confidence. ' +
+    'Lästig, aber weniger schlimm als ein nicht erkanntes Objekt. Weniger ist besser.',
+  benchmarkMissed:
+    'Nicht erkannte Personen: Annotierte Personen auf den Validierungsbildern, für die das Modell bei der eingestellten Confidence ' +
+    'keine passende Erkennung (IoU ≥ 0,5) liefert (False Negatives). Das ist der schwerste Fehler – ein echter Eindringling ohne Alarm. ' +
+    'Alle Modelle werden auf denselben Bildern gezählt, die Zahlen sind direkt vergleichbar. Ein Fehlalarm ist lästig, eine nicht ' +
+    'erkannte Person ist ein Sicherheitsproblem.',
   review:
     'Sichtung: Offene Bilder, auf denen ein Batch-Test nichts gefunden hat, nach Kamera gruppiert. Noch nie getestete Bilder fehlen hier ' +
     '(Hinweis oben) – sie gehören zuerst in einen Batch-Test. Jedes Bild folgt ' +

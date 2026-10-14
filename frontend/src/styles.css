@@ -138,3 +138,6 @@ body {
 .q-tooltip { background: #1e293b; color: var(--app-text); font-size: 12px; border-radius: 6px; }
 a { color: var(--app-cyan); }
 .q-linear-progress__track { background: var(--app-border) !important; opacity: 1 !important; }
+
+/* columns of the focus class (persons): missed detections, mAP */
+.focus-col { background: rgba(59, 130, 246, 0.08); }

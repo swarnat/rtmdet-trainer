@@ -140,3 +140,31 @@ class UrlDownload(BaseModel):
 class ImageUpdate(BaseModel):
     annotation_status: Optional[Literal["unlabeled", "labeled"]] = None
     dataset_split: Optional[Literal["train", "validation"]] = None
+
+
+class ReviewClassCount(BaseModel):
+    class_name: str = Field(serialization_alias="class")
+    positive: int
+    hard_negative: int
+
+
+class ReviewCrop(BaseModel):
+    id: int
+    image_id: int
+    class_name: str = Field(serialization_alias="class")
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+    type: str
+    source: str
+    image_width: int
+    image_height: int
+    dataset_split: Optional[str] = None
+    updated_at: datetime
+
+
+class ReviewCropList(BaseModel):
+    total: int
+    margin: int
+    items: list[ReviewCrop]

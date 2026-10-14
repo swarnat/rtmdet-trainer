@@ -106,3 +106,29 @@ def test_compiled_models_are_cached_per_resolution(client):
         client.post("/api/v1/detect", files={"image": ("a.jpg", jpeg(320, 180), "image/jpeg")}, data={"input_size": size})
     loaded = client.get("/api/v1/models/loaded").json()
     assert sorted((m["input_width"], m["input_height"]) for m in loaded) == [(768, 448), (1536, 864)]
+
+
+def test_detect_url_downloads_and_returns_image(client, monkeypatch):
+    import app.api.routes.detect as detect_route
+
+    data = jpeg(1920, 1080)
+    monkeypatch.setattr(detect_route, "download_image", lambda url: data)
+    res = client.post("/api/v1/detect/url", json={"url": "http://cam/a.jpg", "confidence": 0.5})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert [d["class"] for d in body["detections"]] == ["person", "vehicle"]
+    assert body["image_data_url"].startswith("data:image/jpeg;base64,")
+
+
+def test_detect_url_reports_download_errors(client, monkeypatch):
+    import app.api.routes.detect as detect_route
+    from app.services.url_download import DownloadError
+
+    def fail(url):
+        raise DownloadError("HTTP 404")
+
+    monkeypatch.setattr(detect_route, "download_image", fail)
+    res = client.post("/api/v1/detect/url", json={"url": "http://cam/missing.jpg"})
+    assert res.status_code == 422 and "HTTP 404" in res.json()["detail"]
+    monkeypatch.setattr(detect_route, "download_image", lambda url: b"<html>no image</html>")
+    assert client.post("/api/v1/detect/url", json={"url": "http://cam/page"}).status_code == 422
