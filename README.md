@@ -34,7 +34,7 @@ Voraussetzungen: Docker mit Compose v2. Für das Training empfohlen eine NVIDIA-
 
 ```bash
 ./scripts/generate-env.sh      # erzeugt .env mit zufälligen Secrets, erkennt die NVIDIA-Runtime
-docker compose up -d           # baut und startet alles
+docker compose up -d           # lädt API-/Frontend-Image, baut Trainer/Backup und startet alles
 ./scripts/wait-for-services.sh # wartet, bis die API gesund ist
 ```
 
@@ -48,6 +48,8 @@ Alle Daten liegen in Docker-Volumes (`postgres-data`, `garage-meta`, `garage-dat
 ### Konfiguration
 
 Sämtliche Zugangsdaten kommen aus der `.env` (Vorlage: `.env.example`). Im Quellcode stehen keine Secrets. Garage liest `rpc_secret` und `admin_token` aus `GARAGE_RPC_SECRET` und `GARAGE_ADMIN_TOKEN`. Der S3-Key (`S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`, Format `GK` + 24 Hex bzw. 64 Hex) wird von `garage-init` importiert.
+
+API und Frontend kommen als fertige Images von Docker Hub (`swarnat/rtmdet-annotations-backend`, `swarnat/rtmdet-annotations-frontend`), Version über `APP_VERSION` in der `.env` (Standard `latest`). Aktualisieren: `docker compose pull api frontend && docker compose up -d`. Neue Images veröffentlichen: `make release` (fragt nach der Version, pusht zusätzlich `latest`). Trainer und Backup werden weiterhin lokal gebaut.
 
 Die GPU wird über `COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml` in der `.env` an den Trainer durchgereicht. Ohne GPU diese Zeile auf `docker-compose.yml` setzen; dann ist nur CPU-Training möglich.
 
@@ -393,13 +395,13 @@ docker compose run --rm --no-deps -e OD_BASE_URL=http://frontend api python -m p
 
 ## Entwicklung
 
-* **Dev-Modus mit automatischem Neuladen** (`docker-compose.dev.yml`): API (`uvicorn --reload`, Quellcode aus `backend/` und `common/` gemountet) und Frontend (Vite-Dev-Server mit Hot Reload statt nginx-Build) übernehmen Dateiänderungen sofort, ohne Image-Build. Gleiche Ports wie im normalen Stack.
+* **Dev-Modus mit automatischem Neuladen** (`docker-compose.dev.yml`): API (`uvicorn --reload`, Quellcode aus `backend/` und `common/` gemountet) und Frontend (Vite-Dev-Server mit Hot Reload statt nginx-Build) übernehmen Dateiänderungen sofort, ohne Image-Build. Die API wird dabei aus dem Quellcode gebaut (`object-detection/api:dev`) statt das veröffentlichte Image zu nutzen. Gleiche Ports wie im normalen Stack.
   ```bash
   # dauerhaft: in .env die Datei an COMPOSE_FILE anhängen
   COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml:docker-compose.dev.yml
   docker compose up -d
-  # zurück zum normalen Stack: Eintrag wieder entfernen, dann
-  docker compose up -d --build
+  # zurück zum normalen Stack (veröffentlichte Images): Eintrag wieder entfernen, dann
+  docker compose up -d
   ```
   Neue Alembic-Migrationen laufen nur beim Containerstart (`docker compose restart api`). Der Trainer lädt nicht automatisch neu (`docker compose up -d --build trainer`). Werden Änderungen nicht erkannt (z. B. Quellcode auf einem Windows-Laufwerk), `VITE_USE_POLLING=true` in `.env` setzen.
 * Frontend mit Hot Reload ohne Docker: `cd frontend && npm ci && VITE_API_PROXY=http://localhost:8000 npm run dev`

@@ -3,9 +3,14 @@
 #   COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml:docker-compose.dev.yml
 # or once:  docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 # Same service names and ports as the production stack; remove the file from COMPOSE_FILE
-# and run `docker compose up -d --build` to go back to the built images.
+# and run `docker compose up -d` to go back to the published images.
 services:
   api:
+    # built from the source (local tag, does not overwrite the published image)
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: object-detection/api:dev
     # source code from the host instead of the copy in the image
     volumes:
       - ./backend:/srv/backend
@@ -26,7 +31,6 @@ services:
 
   frontend:
     # Vite dev server with hot module replacement instead of the nginx build
-    build: !reset null
     image: node:22-alpine
     working_dir: /app
     environment:
