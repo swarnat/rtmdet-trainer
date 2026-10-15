@@ -27,6 +27,8 @@ COPY backup/odbackup /srv/backup/odbackup
 RUN pip install --no-deps /srv/backup
 COPY backend /srv/backend
 COPY tests /srv/tests
+# Garage configuration and init script (services garage-config / garage-init run this image)
+COPY infrastructure/garage /srv/garage
 RUN pip install --no-deps -e /srv/backend
 
 RUN useradd --system --uid 10001 --create-home --home-dir /home/app app \

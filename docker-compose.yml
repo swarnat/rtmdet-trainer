@@ -1,6 +1,6 @@
 # Object Detection Training & Inference - complete local stack
 #   docker compose up -d        (see README.md; GPU: docker-compose.gpu.yml via COMPOSE_FILE in .env)
-# API and frontend come from the published images (make release, version: APP_VERSION in .env);
+# API, frontend, trainer and backup come from the published images (make release, version: APP_VERSION in .env);
 # docker-compose.dev.yml builds them from the source instead. Updates: docker compose pull && docker compose up -d
 name: object-detection
 
@@ -45,16 +45,29 @@ services:
       timeout: 3s
       retries: 20
 
+  garage-config:
+    # copies garage.toml from the API image into a volume, so the stack needs no files from the repository
+    image: swarnat/rtmdet-annotations-backend:${APP_VERSION:-latest}
+    user: "0"
+    entrypoint: ["cp", "/srv/garage/garage.toml", "/garage-config/garage.toml"]
+    volumes:
+      - garage-config:/garage-config
+    restart: "no"
+
   garage:
     image: dxflrs/garage:v1.0.1
     restart: unless-stopped
     environment:
+      GARAGE_CONFIG_FILE: /etc/garage/garage.toml
       GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:?set GARAGE_RPC_SECRET in .env}
       GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN:?set GARAGE_ADMIN_TOKEN in .env}
     volumes:
-      - ./infrastructure/garage/garage.toml:/etc/garage.toml:ro
+      - garage-config:/etc/garage:ro
       - garage-meta:/var/lib/garage/meta
       - garage-data:/var/lib/garage/data
+    depends_on:
+      garage-config:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "/garage", "status"]
       interval: 5s
@@ -62,8 +75,9 @@ services:
       retries: 20
 
   garage-init:
-    build:
-      context: ./infrastructure/garage
+    # one-shot, idempotent (layout, S3 key, buckets); a stdlib Python script, run with the API image
+    image: swarnat/rtmdet-annotations-backend:${APP_VERSION:-latest}
+    entrypoint: ["python", "/srv/garage/init.py"]
     restart: "no"
     environment:
       <<: *s3-env
@@ -109,10 +123,7 @@ services:
       retries: 10
 
   trainer:
-    build:
-      context: .
-      dockerfile: trainer/Dockerfile
-    image: object-detection/trainer:latest
+    image: swarnat/rtmdet-annotations-trainer:${APP_VERSION:-latest}
     restart: unless-stopped
     environment:
       <<: [*db-env, *s3-env]
@@ -136,10 +147,7 @@ services:
   backup:
     # full backups (database + all buckets) as tar files in BACKUP_PATH; worker for the UI and CLI:
     #   docker compose exec backup odbackup create | list | verify NAME | restore NAME   (see README / Makefile)
-    build:
-      context: .
-      dockerfile: backup/Dockerfile
-    image: object-detection/backup:latest
+    image: swarnat/rtmdet-annotations-backup:${APP_VERSION:-latest}
     restart: unless-stopped
     environment:
       <<: [*db-env, *s3-env]
@@ -178,4 +186,5 @@ volumes:
   redis-data:
   garage-meta:
   garage-data:
+  garage-config:
   model-cache:

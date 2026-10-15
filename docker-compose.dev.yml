@@ -29,6 +29,25 @@ services:
         exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers
         --reload --reload-dir /srv/backend/app --reload-dir /srv/common/odcore
 
+  trainer:
+    # built from the source (local tag); no reload: docker compose up -d --build trainer
+    build:
+      context: .
+      dockerfile: trainer/Dockerfile
+    image: object-detection/trainer:dev
+
+  backup:
+    build:
+      context: .
+      dockerfile: backup/Dockerfile
+    image: object-detection/backup:dev
+
+  garage-config:
+    image: object-detection/api:dev
+
+  garage-init:
+    image: object-detection/api:dev
+
   frontend:
     # Vite dev server with hot module replacement instead of the nginx build
     image: node:22-alpine

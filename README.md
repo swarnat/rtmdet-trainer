@@ -26,6 +26,7 @@ Lokal betreibbare Webanwendung zur Objekterkennung in 16:9-Kamerabildern mit RTM
 | `postgres`    | Metadaten (Images, Annotations, TrainingRuns, ModelVersions, Settings) |
 | `redis`       | Job-Queue (RQ) |
 | `garage`      | S3-Storage für Bilder, Dataset-Snapshots, Modelle |
+| `garage-config` | einmalig: kopiert `garage.toml` aus dem API-Image ins Volume `garage-config` |
 | `garage-init` | einmalige, idempotente Initialisierung (Layout, S3-Key, Buckets) |
 
 ## Schnellstart
@@ -34,7 +35,7 @@ Voraussetzungen: Docker mit Compose v2. Für das Training empfohlen eine NVIDIA-
 
 ```bash
 ./scripts/generate-env.sh      # erzeugt .env mit zufälligen Secrets, erkennt die NVIDIA-Runtime
-docker compose up -d           # lädt API-/Frontend-Image, baut Trainer/Backup und startet alles
+docker compose up -d           # lädt die fertigen Images und startet alles
 ./scripts/wait-for-services.sh # wartet, bis die API gesund ist
 ```
 
@@ -49,7 +50,7 @@ Alle Daten liegen in Docker-Volumes (`postgres-data`, `garage-meta`, `garage-dat
 
 Sämtliche Zugangsdaten kommen aus der `.env` (Vorlage: `.env.example`). Im Quellcode stehen keine Secrets. Garage liest `rpc_secret` und `admin_token` aus `GARAGE_RPC_SECRET` und `GARAGE_ADMIN_TOKEN`. Der S3-Key (`S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`, Format `GK` + 24 Hex bzw. 64 Hex) wird von `garage-init` importiert.
 
-API und Frontend kommen als fertige Images von Docker Hub (`swarnat/rtmdet-annotations-backend`, `swarnat/rtmdet-annotations-frontend`), Version über `APP_VERSION` in der `.env` (Standard `latest`). Aktualisieren: `docker compose pull api frontend && docker compose up -d`. Neue Images veröffentlichen: `make release` (fragt nach der Version, pusht zusätzlich `latest`). Trainer und Backup werden weiterhin lokal gebaut.
+API, Frontend, Trainer und Backup kommen als fertige Images von Docker Hub (`swarnat/rtmdet-annotations-backend`, `-frontend`, `-trainer`, `-backup`), Version über `APP_VERSION` in der `.env` (Standard `latest`). Aktualisieren: `docker compose pull && docker compose up -d`. Neue Images veröffentlichen: `make release` (fragt nach der Version, pusht zusätzlich `latest`). Der Stack braucht außer `docker-compose.yml` und `.env` keine Dateien aus dem Repository: `garage.toml` und das Init-Skript `init.py` (nur Standardbibliothek) liegen im API-Image unter `/srv/garage`; `garage-config` kopiert die Konfiguration in das Volume `garage-config`, `garage-init` führt das Skript aus. Eigene Images werden nur im Dev-Modus gebaut.
 
 Die GPU wird über `COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml` in der `.env` an den Trainer durchgereicht. Ohne GPU diese Zeile auf `docker-compose.yml` setzen; dann ist nur CPU-Training möglich.
 
@@ -309,7 +310,7 @@ trainer/              RQ-Worker, Snapshot, Training, Evaluation, ONNX/OpenVINO-E
 frontend/             Vue 3 + Vite + Quasar + vue-konva
 backup/               Backup-Dienst: Worker + CLI (pg_dump/pg_restore, S3-Streaming), siehe „Backup & Wiederherstellung“
 inference-server/     eigenständiger Produktiv-Stack: Erkennungs-API, Modell per API austauschbar (siehe inference-server/README.md)
-infrastructure/garage garage.toml, idempotentes init.sh (Admin-API)
+infrastructure/garage garage.toml, idempotentes init.py (Admin-API); beides im API-Image unter /srv/garage
 scripts/              generate-env.sh, wait-for-services.sh, bootstrap-model.py
 tests/                backend/ (Geometrie, Annotation, Detection-API, Modelle), trainer/, integration/
 ```
@@ -395,7 +396,7 @@ docker compose run --rm --no-deps -e OD_BASE_URL=http://frontend api python -m p
 
 ## Entwicklung
 
-* **Dev-Modus mit automatischem Neuladen** (`docker-compose.dev.yml`): API (`uvicorn --reload`, Quellcode aus `backend/` und `common/` gemountet) und Frontend (Vite-Dev-Server mit Hot Reload statt nginx-Build) übernehmen Dateiänderungen sofort, ohne Image-Build. Die API wird dabei aus dem Quellcode gebaut (`object-detection/api:dev`) statt das veröffentlichte Image zu nutzen. Gleiche Ports wie im normalen Stack.
+* **Dev-Modus mit automatischem Neuladen** (`docker-compose.dev.yml`): API (`uvicorn --reload`, Quellcode aus `backend/` und `common/` gemountet) und Frontend (Vite-Dev-Server mit Hot Reload statt nginx-Build) übernehmen Dateiänderungen sofort, ohne Image-Build. API, Trainer und Backup werden dabei aus dem Quellcode gebaut (`object-detection/api:dev`, `…/trainer:dev`, `…/backup:dev`) statt das veröffentlichte Image zu nutzen. Gleiche Ports wie im normalen Stack.
   ```bash
   # dauerhaft: in .env die Datei an COMPOSE_FILE anhängen
   COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml:docker-compose.dev.yml
