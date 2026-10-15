@@ -99,8 +99,12 @@ def run_training(run_id: int) -> None:
         if run.status != TrainingStatus.queued:
             log.warning("run %s has status %s, skipping", run_id, run.status.value)
             return
-        if not torch.cuda.is_available():
-            # never fall back to the CPU: a CPU training takes many hours and usually means the GPU got lost
+        cpu_only = (run.params_json or {}).get("device") == "cpu"
+        if cpu_only:
+            # explicit CPU training: hide the GPU before CUDA is initialised (this process runs only this job)
+            os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        elif not torch.cuda.is_available():
+            # never fall back to the CPU silently: a CPU training takes many hours and usually means the GPU got lost
             run.status = TrainingStatus.failed
             run.error = f"no GPU: {NO_GPU_HINT}"
             run.finished_at = utcnow()
@@ -114,6 +118,7 @@ def run_training(run_id: int) -> None:
             base_model_id=run.base_model_id, width=run.input_width, height=run.input_height, epochs=run.epochs,
             batch_size=run.batch_size, learning_rate=run.learning_rate,
             num_workers=int((run.params_json or {}).get("num_workers", 4)),
+            device="cpu" if cpu_only else "gpu",
         )
         class_names = list(run.class_names or [c.name for c in list_classes(session, active_only=True)])
         mapping = coco_index_mapping(c for c in list_classes(session) if c.name in class_names)
@@ -130,6 +135,8 @@ def run_training(run_id: int) -> None:
         log.info("training run %s started with %s", run_id, json.dumps(params))
         log.info("torch %s, CUDA available: %s%s", torch.__version__, torch.cuda.is_available(),
                  f" ({torch.cuda.get_device_name(0)})" if torch.cuda.is_available() else "")
+        if cpu_only:
+            log.info("CPU-only training with %d threads (no AMP); expect a much longer run", torch.get_num_threads())
         reporter.progress(phase="dataset", percent=0)
 
         # 1) dataset snapshot

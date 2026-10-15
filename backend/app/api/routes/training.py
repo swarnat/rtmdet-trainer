@@ -95,13 +95,13 @@ def gpu_status() -> dict:
 
 @router.post("/runs", response_model=TrainingRunOut, status_code=status.HTTP_201_CREATED, summary="Queue a training run")
 def create_run(body: TrainingCreate, session: Session = Depends(get_db)) -> TrainingRunOut:
-    gpu = queue.trainer_gpu_status()
+    gpu = queue.trainer_gpu_status() if body.device == "gpu" else None
     if gpu is not None and not gpu.get("available"):
         # unknown status (trainer down) is accepted: the job waits in the queue and the trainer checks again
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             f"the trainer has no usable GPU ({gpu.get('error') or 'unknown error'}); training requires an NVIDIA GPU. "
-            "Re-create the trainer container: docker compose up -d --force-recreate trainer",
+            "Re-create the trainer container (docker compose up -d --force-recreate trainer) or train on the CPU (device 'cpu')",
         )
     try:
         width, height = parse_input_size(body.input_size)
@@ -144,7 +144,7 @@ def create_run(body: TrainingCreate, session: Session = Depends(get_db)) -> Trai
         epochs=body.epochs,
         batch_size=body.batch_size,
         learning_rate=body.learning_rate,
-        params_json={"num_workers": body.num_workers},
+        params_json={"num_workers": body.num_workers, "device": body.device},
         log="",
     )
     session.add(run)

@@ -14,10 +14,11 @@
           <q-card-section v-if="gpu && !gpu.available" class="q-pt-none">
             <q-banner dense rounded class="bg-negative text-white">
               <template #avatar><q-icon name="memory" /></template>
-              <div class="text-weight-medium">Keine GPU im Trainer – Training nicht möglich</div>
+              <div class="text-weight-medium">Keine GPU im Trainer – nur CPU-Training möglich</div>
               <div class="text-caption">{{ gpu.error }}</div>
               <div class="text-caption q-mt-xs">
                 Trainer-Container neu erstellen: <span class="mono">docker compose up -d --force-recreate trainer</span>
+                – oder unten „Nur auf der CPU trainieren“ wählen (deutlich langsamer).
               </div>
             </q-banner>
           </q-card-section>
@@ -85,6 +86,9 @@
                 <template #append><HelpIcon :text="help.num_workers" /></template>
               </q-input>
             </div>
+            <q-toggle v-model="form.cpu_only" dense label="Nur auf der CPU trainieren (langsam)">
+              <HelpIcon :text="help.cpu_only" inline />
+            </q-toggle>
             <div v-if="elig" class="text-caption">
               Verwendbar: <b>{{ elig.usable.train }}</b> train / <b>{{ elig.usable.validation }}</b> val
               (davon {{ elig.negative }} negativ), {{ elig.hard_negatives }} Hard Negatives.
@@ -100,10 +104,13 @@
               icon="play_arrow"
               label="Training starten"
               :loading="starting"
-              :disable="gpu?.available === false"
+              :disable="gpu?.available === false && !form.cpu_only"
               @click="start"
             />
-            <div v-if="gpu?.available" class="text-caption text-muted">
+            <div v-if="form.cpu_only" class="text-caption text-muted">
+              <q-icon name="memory" size="14px" /> CPU-Training: dauert ein Vielfaches länger als auf der GPU
+            </div>
+            <div v-else-if="gpu?.available" class="text-caption text-muted">
               <q-icon name="memory" size="14px" /> GPU: {{ gpu.devices.join(', ') }}
             </div>
           </q-card-section>
@@ -168,6 +175,7 @@
                 <div><b>Klassen:</b> {{ (selected.class_names ?? []).map((n) => classes.info(n).label).join(', ') }}</div>
                 <div><b>Auflösung<HelpIcon term="resolution" inline />:</b> {{ selected.input_width }}×{{ selected.input_height }}</div>
                 <div><b>Epochs / Batch<HelpIcon :text="`${GLOSSARY.epoch} ${help.batch_size}`" inline />:</b> {{ selected.epochs }} / {{ selected.batch_size }}</div>
+                <div v-if="selected.params_json?.device === 'cpu'"><b>Gerät:</b> nur CPU</div>
                 <div><b>Learning Rate<HelpIcon :text="help.learning_rate" inline />:</b> {{ selected.learning_rate ?? 'auto' }}</div>
                 <div><b>Dataset-Snapshot<HelpIcon term="datasetSnapshot" inline />:</b> <span class="mono">{{ selected.dataset_snapshot ?? '–' }}</span></div>
               </div>
@@ -311,6 +319,7 @@ const form = reactive({
   batch_size: 4,
   learning_rate: '' as string | null,
   num_workers: 4,
+  cpu_only: false,
   class_names: [] as string[],
 })
 const elig = ref<TrainingEligibility | null>(null)
@@ -338,6 +347,9 @@ const help = {
   num_workers:
     'Wie viele Helfer gleichzeitig die Bilder laden und vorbereiten, damit das Training nicht auf Nachschub warten muss. ' +
     'Normalerweise 4 lassen. Bei Fehlern oder wenig Arbeitsspeicher kleiner stellen (0–2).',
+  cpu_only:
+    'Trainiert ohne Grafikkarte nur auf dem Prozessor – auch wenn eine GPU vorhanden ist. Das funktioniert, dauert aber ein Vielfaches länger ' +
+    '(je nach CPU, Auflösung und Bildanzahl Stunden bis Tage). Für einen ersten Versuch wenige Epochs, das kleine Modell (tiny) oder eine kleinere Auflösung wählen.',
 }
 const baseHint = computed(() => {
   const b = baseModels.value.find((x) => x.id === form.base_model_id)
@@ -438,6 +450,7 @@ async function start() {
       batch_size: form.batch_size,
       learning_rate: lr,
       num_workers: form.num_workers,
+      device: form.cpu_only ? 'cpu' : 'gpu',
     })
     $q.notify({ type: 'positive', message: `Trainingslauf #${run.id} eingereiht` })
     selectedId.value = run.id

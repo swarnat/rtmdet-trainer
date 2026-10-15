@@ -30,7 +30,7 @@ Lokal betreibbare Webanwendung zur Objekterkennung in 16:9-Kamerabildern mit RTM
 
 ## Schnellstart
 
-Voraussetzungen: Docker mit Compose v2. Für das Training zwingend eine NVIDIA-GPU mit Treiber und dem NVIDIA Container Toolkit. Ohne GPU funktionieren Annotation, Inferenz und Modellverwaltung, Trainings werden aber abgelehnt.
+Voraussetzungen: Docker mit Compose v2. Für das Training empfohlen eine NVIDIA-GPU mit Treiber und dem NVIDIA Container Toolkit. Ohne GPU funktionieren Annotation, Inferenz und Modellverwaltung; trainiert werden kann dann nur im (deutlich langsameren) CPU-Modus.
 
 ```bash
 ./scripts/generate-env.sh      # erzeugt .env mit zufälligen Secrets, erkennt die NVIDIA-Runtime
@@ -49,9 +49,9 @@ Alle Daten liegen in Docker-Volumes (`postgres-data`, `garage-meta`, `garage-dat
 
 Sämtliche Zugangsdaten kommen aus der `.env` (Vorlage: `.env.example`). Im Quellcode stehen keine Secrets. Garage liest `rpc_secret` und `admin_token` aus `GARAGE_RPC_SECRET` und `GARAGE_ADMIN_TOKEN`. Der S3-Key (`S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`, Format `GK` + 24 Hex bzw. 64 Hex) wird von `garage-init` importiert.
 
-Die GPU wird über `COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml` in der `.env` an den Trainer durchgereicht. Ohne GPU diese Zeile auf `docker-compose.yml` setzen; dann ist kein Training möglich.
+Die GPU wird über `COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml` in der `.env` an den Trainer durchgereicht. Ohne GPU diese Zeile auf `docker-compose.yml` setzen; dann ist nur CPU-Training möglich.
 
-Ein Training läuft nie auf der CPU. Der Healthcheck des Trainers (`python -m trainer.gpu`, alle 30 s) prüft die GPU mit `nvidia-smi` und meldet das Ergebnis über Redis an die API: Ohne GPU ist der Container `unhealthy`, die Trainingsseite zeigt einen Hinweis und die API lehnt neue Trainings ab (HTTP 409). Startet ein bereits eingereihtes Training ohne CUDA, bricht es sofort mit Fehler ab. Unter WSL2 kann ein laufender Container die GPU verlieren (z. B. nach einem Windows-Treiberupdate oder Standby); dann hilft `docker compose up -d --force-recreate trainer`.
+Ein GPU-Training fällt nie still auf die CPU zurück. Der Healthcheck des Trainers (`python -m trainer.gpu`, alle 30 s) prüft die GPU mit `nvidia-smi` und meldet das Ergebnis über Redis an die API: Ohne GPU ist der Container `unhealthy`, die Trainingsseite zeigt einen Hinweis und die API lehnt neue Trainings ab (HTTP 409). Startet ein bereits eingereihtes Training ohne CUDA, bricht es sofort mit Fehler ab. **CPU-Training:** Mit „Nur auf der CPU trainieren“ (API: `"device": "cpu"`) läuft das Training bewusst ohne GPU, auch wenn eine vorhanden ist (die GPU wird für den Job ausgeblendet, kein AMP), und die GPU-Prüfung entfällt. Das dauert ein Vielfaches länger; für erste Versuche wenige Epochs, RTMDet-tiny oder eine kleinere Auflösung wählen. Der Trainer-Container bleibt ohne GPU `unhealthy`, das blockiert das CPU-Training aber nicht. Unter WSL2 kann ein laufender Container die GPU verlieren (z. B. nach einem Windows-Treiberupdate oder Standby); dann hilft `docker compose up -d --force-recreate trainer`.
 
 Die Klassen samt COCO-Mapping werden unter **Klassen** gepflegt (Tabelle `detection_classes`). Weitere fachliche Einstellungen (Standardauflösung, angebotene Auflösungen, Confidence, NMS-IoU, Validierungsanteil) liegen in der Tabelle `settings` und sind in der UI unter **Einstellungen** änderbar. Sie wirken ohne Neustart.
 

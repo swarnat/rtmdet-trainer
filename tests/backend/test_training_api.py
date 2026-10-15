@@ -106,3 +106,13 @@ def test_unknown_gpu_status_does_not_block(client, monkeypatch):
     # passes the GPU check and fails later for a different reason (no labeled images)
     res = client.post("/api/v1/training/runs", json={})
     assert res.status_code == 409 and "GPU" not in res.json()["detail"]
+
+
+def test_cpu_training_skips_the_gpu_check(client, monkeypatch):
+    from app.core import queue
+
+    monkeypatch.setattr(queue, "trainer_gpu_status", lambda: {"available": False, "error": "nvidia-smi not found"})
+    # passes the GPU check and fails later for a different reason (no labeled images)
+    res = client.post("/api/v1/training/runs", json={"device": "cpu"})
+    assert res.status_code == 409 and "GPU" not in res.json()["detail"]
+    assert client.post("/api/v1/training/runs", json={"device": "tpu"}).status_code == 422

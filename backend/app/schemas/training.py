@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -18,6 +18,9 @@ class TrainingCreate(BaseModel):
     batch_size: int = Field(4, ge=1, le=128)
     learning_rate: Optional[float] = Field(None, gt=0, le=1)
     num_workers: int = Field(4, ge=0, le=32)
+    device: Literal["gpu", "cpu"] = Field(
+        "gpu", description="gpu: NVIDIA GPU required (rejected without one); cpu: train on the CPU only, much slower"
+    )
 
 
 class TrainingRunOut(BaseModel):

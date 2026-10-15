@@ -148,6 +148,7 @@ export interface Suggestion {
 
 /** errors_*: error analysis on labeled images instead of suggestions for open images */
 export type BatchScope = 'unlabeled' | 'unlabeled_and_review' | 'unlabeled_last_upload' | 'unlabeled_untested' | 'errors_validation' | 'errors_labeled'
+export type TrainingDevice = 'gpu' | 'cpu'
 export const isErrorAnalysis = (b: { scope: BatchScope }) => b.scope.startsWith('errors_')
 
 export interface BatchTest {
@@ -602,7 +603,7 @@ export const api = {
   getRunLog: (id: number) => request<{ id: number; status: string; log: string }>(`/training/runs/${id}/log`),
   eligibility: (classes: string[]) =>
     request<TrainingEligibility>(`/training/eligibility?classes=${encodeURIComponent(classes.join(','))}`),
-  startRun: (body: { base_model_id: string; class_names?: string[]; input_size: string; epochs: number; batch_size: number; learning_rate?: number | null; num_workers?: number }) =>
+  startRun: (body: { base_model_id: string; class_names?: string[]; input_size: string; epochs: number; batch_size: number; learning_rate?: number | null; num_workers?: number; device?: TrainingDevice }) =>
     request<TrainingRun>('/training/runs', json('POST', body)),
   /** status null = unknown (trainer not running / not checked yet) */
   trainerGpu: () => request<{ status: TrainerGpuStatus | null }>('/training/gpu'),
