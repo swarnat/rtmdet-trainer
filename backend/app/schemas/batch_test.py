@@ -10,10 +10,10 @@ class BatchTestCreate(BaseModel):
     model: str = Field("production", description="'production', 'candidate' or a version like 'model-0003'")
     input_size: Optional[str] = Field(None, description="WIDTHxHEIGHT; default: setting default_input_size")
     confidence: Optional[float] = Field(None, gt=0, le=1, description="default: setting default_confidence")
-    scope: Literal["unlabeled", "unlabeled_and_review", "unlabeled_last_upload", "errors_validation", "errors_labeled"] = Field(
+    scope: Literal["unlabeled", "unlabeled_and_review", "unlabeled_last_upload", "unlabeled_untested", "errors_validation", "errors_labeled"] = Field(
         "unlabeled",
         description="open images only, or additionally labeled images that still need review for new classes, or the "
-        "open images of the most recent upload session (pauses < 30 min); "
+        "open images of the most recent upload session (pauses < 30 min), or the open images no batch test has run on yet; "
         "errors_*: error analysis on labeled validation images / all labeled images",
     )
 

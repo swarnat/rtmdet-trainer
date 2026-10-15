@@ -36,7 +36,7 @@ from app.services.model_registry import ModelRegistry, resolve_model
 
 log = logging.getLogger(__name__)
 
-SUGGESTION_SCOPES = ("unlabeled", "unlabeled_and_review", "unlabeled_last_upload")
+SUGGESTION_SCOPES = ("unlabeled", "unlabeled_and_review", "unlabeled_last_upload", "unlabeled_untested")
 # error analysis on labeled images: validation split only, or all labeled images
 ERROR_SCOPES = ("errors_validation", "errors_labeled")
 SCOPES = SUGGESTION_SCOPES + ERROR_SCOPES
@@ -82,6 +82,10 @@ def select_image_ids(session: Session, scope: str) -> list[int]:
             .order_by(Image.id)
         ).scalars()
     )
+    if scope == "unlabeled_untested":
+        # every batch test leaves a suggestion row per image (empty if nothing was found)
+        tested = set(session.execute(select(ImageSuggestion.image_id)).scalars())
+        return [i for i in ids if i not in tested]
     if scope == "unlabeled_last_upload":
         recent = set(last_upload_ids(session))
         return [i for i in ids if i in recent]

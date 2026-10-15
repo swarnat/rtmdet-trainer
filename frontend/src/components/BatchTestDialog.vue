@@ -88,6 +88,7 @@ const scopeOptions: { label: string; caption: string; value: BatchScope }[] = [
   { label: 'Offene Bilder', caption: 'alle noch nicht annotierten Bilder', value: 'unlabeled' },
   { label: 'Offene Bilder aus letztem Upload', caption: 'jüngste Upload-Sitzung (Pausen < 30 min)', value: 'unlabeled_last_upload' },
   { label: 'Offene + nachzuprüfende Bilder', caption: 'zusätzlich annotierte Bilder, die für neue Klassen zu prüfen sind', value: 'unlabeled_and_review' },
+  { label: 'Offene, noch nicht getestete Bilder', caption: 'nur Bilder, auf denen noch kein Batch-Test lief', value: 'unlabeled_untested' },
 ]
 const form = reactive<{ model: string; input_size: string; confidence: number; scope: BatchScope }>({
   model: 'production', input_size: '1536x864', confidence: 0.25, scope: 'unlabeled',

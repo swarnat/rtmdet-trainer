@@ -147,7 +147,7 @@ export interface Suggestion {
 }
 
 /** errors_*: error analysis on labeled images instead of suggestions for open images */
-export type BatchScope = 'unlabeled' | 'unlabeled_and_review' | 'unlabeled_last_upload' | 'errors_validation' | 'errors_labeled'
+export type BatchScope = 'unlabeled' | 'unlabeled_and_review' | 'unlabeled_last_upload' | 'unlabeled_untested' | 'errors_validation' | 'errors_labeled'
 export const isErrorAnalysis = (b: { scope: BatchScope }) => b.scope.startsWith('errors_')
 
 export interface BatchTest {

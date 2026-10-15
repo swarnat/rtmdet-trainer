@@ -239,3 +239,17 @@ def test_scope_open_images_of_last_upload(env):
     assert client.get(f"/api/v1/batch-tests/{batch['id']}").json()["total"] == 1
     with session_factory() as s:
         assert [r.image_id for r in s.query(ImageSuggestion)] == [4]
+
+
+def test_scope_untested_open_images(env):
+    client, session_factory = env
+    with session_factory() as s:  # image 1 was tested before (nothing found), image 2 never
+        s.add(ImageSuggestion(image_id=1, model_version="model-0001", input_width=1536, input_height=864,
+                              confidence=0.25, detections_json=[]))
+        s.commit()
+    batch = client.post("/api/v1/batch-tests", json={"scope": "unlabeled_untested"}).json()
+    assert client.get(f"/api/v1/batch-tests/{batch['id']}").json()["total"] == 1
+    with session_factory() as s:
+        assert {r.image_id: r.batch_id for r in s.query(ImageSuggestion)} == {1: None, 2: batch["id"]}
+    # all open images tested now: nothing left in scope
+    assert client.post("/api/v1/batch-tests", json={"scope": "unlabeled_untested"}).status_code == 409
