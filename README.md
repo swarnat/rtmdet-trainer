@@ -362,10 +362,12 @@ Alle Befehle laufen im laufenden Dienst `backup` (`docker compose exec backup od
 API: `GET /api/v1/deployment` (Status des Produktivsystems), `POST /api/v1/deployment {"version": "model-0005"}`.
 Der Production-Status hier im System ist davon unabhängig.
 
-## Download-Proxy für Bild-URLs
+## Proxy für Bild-Downloads und Modell-Rollout
 
-Sind die Bildquellen (z. B. `http://10.2.0.2/...`) vom Server aus nicht erreichbar, kann der Batch-Download über
-einen Forward-Proxy auf einem anderen Host laufen. Nur diese Downloads nutzen den Proxy, S3, DB und Deployment nicht.
+Sind die Bildquellen (z. B. `http://10.2.0.2/...`) oder das Produktivsystem vom Server aus nicht erreichbar, können
+Batch-Download (`DOWNLOAD_PROXY`) und Modell-Rollout inkl. Statusabfrage (`DEPLOYMENT_PROXY`) über einen
+Forward-Proxy auf einem anderen Host laufen. S3 und DB nutzen keinen Proxy. Beide Variablen dürfen auf denselben
+Proxy zeigen; der Host des Produktivsystems muss dann zusätzlich in `filter` stehen.
 
 ```bash
 # auf dem Host, der die Bildquellen erreicht (Allow/Filter in tinyproxy.conf bzw. filter anpassen)
@@ -373,6 +375,7 @@ cd infrastructure/download-proxy && docker compose up -d
 
 # auf dem Detection-Server in .env, danach: docker compose up -d api
 DOWNLOAD_PROXY=http://<proxy-host>:8888
+DEPLOYMENT_PROXY=http://<proxy-host>:8888
 ```
 
 ## Tests

@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     max_upload_mb: int = Field(50, alias="MAX_UPLOAD_MB")
     # Optional HTTP(S) proxy used only for image downloads from URLs, e.g. http://proxy-host:8888
     download_proxy: str | None = Field(None, alias="DOWNLOAD_PROXY")
+    # Optional HTTP(S) proxy used only for model rollout/status requests to the production system
+    deployment_proxy: str | None = Field(None, alias="DEPLOYMENT_PROXY")
     cors_origins: str = Field("", alias="CORS_ORIGINS")
     log_level: str = Field("INFO", alias="LOG_LEVEL")
 

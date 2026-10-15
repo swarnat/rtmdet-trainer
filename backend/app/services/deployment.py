@@ -20,6 +20,8 @@ from odcore.db import ModelVersion, utcnow
 from odcore.settings_store import get_setting
 from odcore.storage import ObjectStorage
 
+from app.core.config import get_settings
+
 log = logging.getLogger(__name__)
 
 UPLOAD_TIMEOUT = httpx.Timeout(600.0, connect=10.0)
@@ -42,7 +44,7 @@ class Target:
 
 def http_client(timeout: httpx.Timeout) -> httpx.Client:
     """Separate function so tests can substitute the transport."""
-    return httpx.Client(timeout=timeout)
+    return httpx.Client(timeout=timeout, proxy=get_settings().deployment_proxy or None)
 
 
 def get_target(session: Session) -> Optional[Target]:

@@ -143,3 +143,10 @@ def test_status_passes_on_warnings_of_the_production_system(client, monkeypatch)
 
     monkeypatch.setattr(deployment, "http_client", lambda timeout: httpx.Client(transport=httpx.MockTransport(handler)))
     assert client.get("/api/v1/deployment").json()["warnings"] == ["CPU lacks sse4_1, sse4_2 (required by OpenVINO)"]
+
+
+@pytest.mark.parametrize("configured, expected", [("http://proxy.local:8888", "http://proxy.local:8888"), ("", None)])
+def test_http_client_uses_configured_proxy(monkeypatch, configured, expected):
+    monkeypatch.setattr(deployment, "get_settings", lambda: type("S", (), {"deployment_proxy": configured})())
+    monkeypatch.setattr(deployment.httpx, "Client", lambda **kw: kw)
+    assert deployment.http_client(deployment.STATUS_TIMEOUT)["proxy"] == expected
