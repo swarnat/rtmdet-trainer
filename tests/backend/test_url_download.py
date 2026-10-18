@@ -54,7 +54,7 @@ def env(session_factory, monkeypatch):
         with httpx.Client(transport=transport) as client, client.stream(method, url, headers=kw.get("headers")) as res:
             yield res
 
-    monkeypatch.setattr(url_download.httpx, "stream", stream)
+    monkeypatch.setattr(httpx, "stream", stream)
     storage = MemoryStorage()
 
     def db():
@@ -118,12 +118,12 @@ def test_download_respects_size_limit(env, monkeypatch):
 def test_download_uses_configured_proxy(env, monkeypatch, configured, expected):
     client, _, _ = env
     monkeypatch.setattr(url_download, "get_settings", lambda: type("S", (), {"max_upload_mb": 50, "download_proxy": configured})())
-    mocked, proxies = url_download.httpx.stream, []
+    mocked, proxies = httpx.stream, []
 
     def stream(method, url, **kw):
         proxies.append(kw.get("proxy"))
         return mocked(method, url, **kw)
 
-    monkeypatch.setattr(url_download.httpx, "stream", stream)
+    monkeypatch.setattr(httpx, "stream", stream)
     assert post(client, "http://cam.local/b.jpg")["status"] == "created"
     assert proxies == [expected]

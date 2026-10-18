@@ -59,7 +59,7 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
-import { api, errorMessage } from '@/services/api'
+import { api, errorMessage, type UploadResult } from '@/services/api'
 
 export interface DownloadProgress {
   total: number
@@ -71,7 +71,14 @@ export interface DownloadProgress {
   failed: number
 }
 
-defineProps<{ modelValue: boolean }>()
+const props = withDefaults(
+  defineProps<{
+    modelValue: boolean
+    /** downloads one URL (default: into the training images of this system) */
+    download?: (url: string, signal: AbortSignal) => Promise<Pick<UploadResult, 'status' | 'error'>>
+  }>(),
+  { download: api.downloadImage },
+)
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   progress: [p: DownloadProgress | null]
@@ -111,7 +118,7 @@ async function start() {
     while (queue.length && !signal.aborted) {
       const url = queue.shift()!
       try {
-        const r = await api.downloadImage(url, signal)
+        const r = await props.download(url, signal)
         if (r.status === 'created') progress.created++
         else if (r.status === 'duplicate') progress.duplicates++
         else if (r.status === 'deleted') progress.deleted++

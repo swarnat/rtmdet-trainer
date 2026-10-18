@@ -22,7 +22,7 @@
           <q-tooltip>Nächstes Bild (Bild ↓)</q-tooltip>
         </q-btn>
         <div v-if="store.image" class="col text-body2 ellipsis" style="min-width: 0">
-          <b>#{{ store.image.id }}</b> {{ store.image.original_filename }} · {{ store.image.width }}×{{ store.image.height }}
+          <b>#{{ store.image.id }}</b> <span :title="store.image.original_filename ?? undefined">{{ fmtMiddle(store.image.original_filename, 36) }}</span> · {{ store.image.width }}×{{ store.image.height }}
           <q-badge outline :color="store.image.annotation_status === 'labeled' ? 'positive' : 'grey-5'" class="q-ml-sm">
             {{ store.image.annotation_status === 'labeled' ? (store.image.annotation_count ? 'annotiert' : 'negativ') : 'offen' }}
           </q-badge>
@@ -381,7 +381,7 @@ import AnnotationCanvas from '@/components/AnnotationCanvas.vue'
 import HelpIcon from '@/components/HelpIcon.vue'
 import ImageBrowser from '@/components/ImageBrowser.vue'
 import ModelSelector from '@/components/ModelSelector.vue'
-import { api, errorMessage, type NavFilter } from '@/services/api'
+import { api, errorMessage, fmtMiddle, type NavFilter } from '@/services/api'
 import { useClassesStore } from '@/stores/classes'
 import { useAnnotationStore } from '@/stores/annotation'
 import { useModelsStore } from '@/stores/models'

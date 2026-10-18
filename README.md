@@ -310,9 +310,10 @@ trainer/              RQ-Worker, Snapshot, Training, Evaluation, ONNX/OpenVINO-E
 frontend/             Vue 3 + Vite + Quasar + vue-konva
 backup/               Backup-Dienst: Worker + CLI (pg_dump/pg_restore, S3-Streaming), siehe „Backup & Wiederherstellung“
 inference-server/     eigenständiger Produktiv-Stack: Erkennungs-API, Modell per API austauschbar (siehe inference-server/README.md)
+client-annotator/     eigenständiger Kunden-Annotationsdienst: Batch-Download, Prüfung, Annotation (siehe client-annotator/README.md)
 infrastructure/garage garage.toml, idempotentes init.py (Admin-API); beides im API-Image unter /srv/garage
 scripts/              generate-env.sh, wait-for-services.sh, bootstrap-model.py
-tests/                backend/ (Geometrie, Annotation, Detection-API, Modelle), trainer/, integration/
+tests/                backend/ (Geometrie, Annotation, Detection-API, Modelle), trainer/, inference_server/, client_annotator/, integration/
 ```
 
 ## Backup & Wiederherstellung
@@ -362,11 +363,30 @@ Alle Befehle laufen im laufenden Dienst `backup` (`docker compose exec backup od
 API: `GET /api/v1/deployment` (Status des Produktivsystems), `POST /api/v1/deployment {"version": "model-0005"}`.
 Der Production-Status hier im System ist davon unabhängig.
 
+## Kunden-Annotationsdienst (Client Annotator)
+
+`client-annotator/` ist ein eigener Stack für den Kundenserver (Image `swarnat/rtmdet-client-annotator`, gebaut mit
+`make client-annotator`): Bilder per Batch-Download oder Upload laden, gegen den Inference-Server prüfen und annotieren –
+mit denselben Annotationswerkzeugen wie hier. Gespeichert wird bewusst einfach (Dateien + SQLite auf einem Volume).
+
+1. Dienst auf dem Kundenserver starten (siehe `client-annotator/README.md`), dort `CLIENT_ACCESS_TOKEN` setzen.
+2. Hier unter **Einstellungen → Kunden-Annotationsdienst** URL, denselben Access Token und ggf. die Adresse des
+   Inference-Servers aus Sicht des Kundenservers eintragen, speichern, **Konfiguration übertragen** (aktive Klassen,
+   Inference-Server, `default_confidence`). Nach Änderungen an den Klassen erneut übertragen.
+3. Auf dem Kundenserver annotieren. Danach hier auf der Annotationsseite **Client** → **Einlesen**: jedes Bild wird wie ein
+   Upload übernommen (Duplikate erkannt), annotierte Bilder werden als annotiert gespeichert (ein hier schon annotiertes
+   Bild behält seine Annotationen), offene Bilder mit Prüfung bekommen deren Treffer als Vorschläge. Jedes eingelesene
+   Bild wird danach auf dem Kundenserver gelöscht – nach einem Fehler bleibt es dort und kann erneut eingelesen werden.
+
+Die Verbindung läuft über `DEPLOYMENT_PROXY`, falls gesetzt (gleiches Kundennetz wie das Produktivsystem).
+API: `GET /api/v1/client-annotator` (Status), `POST /api/v1/client-annotator/config`, `GET /api/v1/client-annotator/images`,
+`POST /api/v1/client-annotator/images/{id}/import`.
+
 ## Proxy für Bild-Downloads und Modell-Rollout
 
 Sind die Bildquellen (z. B. `http://10.2.0.2/...`) oder das Produktivsystem vom Server aus nicht erreichbar, können
 Batch-Download (`DOWNLOAD_PROXY`) und Modell-Rollout inkl. Statusabfrage (`DEPLOYMENT_PROXY`) über einen
-Forward-Proxy auf einem anderen Host laufen. S3 und DB nutzen keinen Proxy. Beide Variablen dürfen auf denselben
+Forward-Proxy auf einem anderen Host laufen (`DEPLOYMENT_PROXY` gilt auch für den Kunden-Annotationsdienst). S3 und DB nutzen keinen Proxy. Beide Variablen dürfen auf denselben
 Proxy zeigen; der Host des Produktivsystems muss dann zusätzlich in `filter` stehen.
 
 ```bash
@@ -389,6 +409,9 @@ docker compose run --rm --no-deps trainer python -m pytest -q /srv/tests/trainer
 
 # Inference-Server (Produktivsystem)
 make inference-server-test
+
+# Kunden-Annotationsdienst
+make client-annotator-test
 
 # Backup/Restore-Logik
 make backup-test

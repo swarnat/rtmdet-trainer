@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from app.api.routes import annotation_review, annotations, backups, batch_tests, classes, deployment, detect, images, models, settings, training
+from app.api.routes import annotation_review, annotations, backups, batch_tests, classes, client_annotator, deployment, detect, images, models, settings, system, training
 from app.core.config import get_settings
 
 API_PREFIX = "/api/v1"
@@ -84,5 +84,5 @@ def health() -> JSONResponse:
     return JSONResponse(status_code=200 if ok else 503, content={"status": "ok" if ok else "degraded", "checks": checks})
 
 
-for router in (health_router, detect.router, batch_tests.router, classes.router, images.router, annotations.router, annotation_review.router, training.router, models.router, deployment.router, backups.router, settings.router):
+for router in (health_router, detect.router, batch_tests.router, classes.router, images.router, annotations.router, annotation_review.router, training.router, models.router, deployment.router, client_annotator.router, backups.router, settings.router, system.router):
     app.include_router(router, prefix=API_PREFIX)

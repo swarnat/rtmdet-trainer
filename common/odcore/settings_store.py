@@ -35,10 +35,15 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Production detection API (inference-server): base URL and access key for model uploads ("" = not configured)
     "deployment_url": "",
     "deployment_access_key": "",
+    # Client annotator (client-annotator/) on a customer server: base URL and access token ("" = not configured)
+    "client_annotator_url": "",
+    "client_annotator_access_key": "",
+    # inference server as seen from the customer server, pushed with the configuration ("" = deployment_url)
+    "client_inference_url": "",
 }
 
 # Settings whose value is never sent back to clients (replaced by SECRET_MASK when set)
-SECRET_SETTINGS = ("deployment_access_key",)
+SECRET_SETTINGS = ("deployment_access_key", "client_annotator_access_key")
 SECRET_MASK = "********"
 
 

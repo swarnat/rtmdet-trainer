@@ -3,6 +3,10 @@
 #   make inference-server TAG=1.0.0    ... with an explicit version tag
 #   make inference-server-test         run the inference server tests in Docker
 #   make inference-server-push         build and push to the registry (docker login first)
+#   make client-annotator              build the client annotator image (annotation service on a customer server)
+#   make client-annotator TAG=1.0.0    ... with an explicit version tag
+#   make client-annotator-test         run the client annotator tests in Docker
+#   make client-annotator-push         build and push to the registry (docker login first)
 #   make backup                        full backup now (database + images + models + configuration) into BACKUP_PATH
 #   make backup-list                   list backups
 #   make backup-verify FILE=<name>     read and check a backup file completely
@@ -13,6 +17,7 @@
 #   make release-backend / -frontend / -trainer / -backup   only one of the images
 
 INFERENCE_IMAGE ?= swarnat/rtmdet-detection
+CLIENT_ANNOTATOR_IMAGE ?= swarnat/rtmdet-client-annotator
 BACKEND_IMAGE ?= swarnat/rtmdet-annotations-backend
 FRONTEND_IMAGE ?= swarnat/rtmdet-annotations-frontend
 TRAINER_IMAGE ?= swarnat/rtmdet-annotations-trainer
@@ -20,6 +25,7 @@ BACKUP_IMAGE ?= swarnat/rtmdet-annotations-backup
 TAG ?= latest
 
 .PHONY: help inference-server make-inference-server inference-server-test inference-server-push \
+	client-annotator client-annotator-test client-annotator-push \
 	backup backup-list backup-verify restore backup-test release release-backend release-frontend release-trainer release-backup
 
 help:
@@ -37,6 +43,16 @@ inference-server-test:
 
 inference-server-push: inference-server
 	docker push $(INFERENCE_IMAGE):$(TAG)
+
+client-annotator:
+	docker build -f client-annotator/Dockerfile -t $(CLIENT_ANNOTATOR_IMAGE):$(TAG) .
+
+client-annotator-test:
+	docker build -f client-annotator/Dockerfile --target test -t $(CLIENT_ANNOTATOR_IMAGE):test .
+	docker run --rm $(CLIENT_ANNOTATOR_IMAGE):test
+
+client-annotator-push: client-annotator
+	docker push $(CLIENT_ANNOTATOR_IMAGE):$(TAG)
 
 # -- backup / restore (docker compose uses COMPOSE_FILE from .env) -------------------------
 # All commands run inside the running "backup" service (docker compose exec).

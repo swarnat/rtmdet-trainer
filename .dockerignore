@@ -1,6 +1,7 @@
 **/.venv
 **/node_modules
 **/dist
+**/dist-client
 **/__pycache__
 **/*.pyc
 **/.pytest_cache

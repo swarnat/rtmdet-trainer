@@ -157,6 +157,16 @@ export const GLOSSARY = {
   deploymentKey:
     'Zugangsschlüssel, mit dem sich dieses System beim Produktivsystem ausweist. Muss dort als MODEL_UPLOAD_KEY eingetragen sein ' +
     '(mindestens 16 Zeichen). Aus Sicherheitsgründen wird er nach dem Speichern nicht mehr angezeigt – leer lassen bzw. Sternchen stehen lassen, um ihn zu behalten.',
+  clientAnnotator:
+    'Kunden-Annotationsdienst: ein eigener Container auf dem Kundenserver (client-annotator/). Dort werden Bilder per ' +
+    'Batch-Download geladen, gegen den Inference-Server geprüft und annotiert. Hier „Client-Annotationen einlesen“ holt alle ' +
+    'Bilder samt Annotationen ab und löscht sie danach auf dem Kundenserver – dort kann der nächste Batch vorbereitet werden.',
+  clientAnnotatorKey:
+    'Access Token des Kunden-Annotationsdienstes: muss dort als CLIENT_ACCESS_TOKEN eingetragen sein (mindestens 16 Zeichen). ' +
+    'Wird nach dem Speichern nicht mehr angezeigt – Sternchen stehen lassen, um ihn zu behalten.',
+  clientInferenceUrl:
+    'Adresse des Inference-Servers aus Sicht des Kundenservers, z. B. http://localhost:8100, wenn beide dort laufen. ' +
+    'Leer = URL des Produktivsystems. Wird mit „Konfiguration übertragen“ an den Dienst geschickt.',
   deploy:
     'Ausrollen: Überträgt dieses Modell auf das Produktivsystem. Dort wird es zuerst geprüft und ersetzt dann sofort das bisher aktive Modell. ' +
     'Schlägt die Prüfung fehl, bleibt das alte Modell aktiv.',

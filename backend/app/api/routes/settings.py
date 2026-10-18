@@ -57,15 +57,15 @@ def _validate(key: str, value: Any) -> Any:
     if key == "default_base_model":
         get_base_model(str(value))  # raises KeyError for unknown ids
         return value
-    if key == "deployment_url":
+    if key in ("deployment_url", "client_annotator_url", "client_inference_url"):
         value = str(value).strip().rstrip("/")
         if value and not value.startswith(("http://", "https://")):
-            raise ValueError("deployment_url must start with http:// or https://")
+            raise ValueError(f"{key} must start with http:// or https://")
         return value
-    if key == "deployment_access_key":
+    if key in ("deployment_access_key", "client_annotator_access_key"):
         value = str(value).strip()
         if value and len(value) < 16:
-            raise ValueError("deployment_access_key must have at least 16 characters")
+            raise ValueError(f"{key} must have at least 16 characters")
         return value
     if key == "validation_ratio":
         value = float(value)

@@ -32,6 +32,9 @@
         <q-btn color="secondary" icon="playlist_play" label="Batch-Test" dense no-caps no-wrap class="col q-py-xs" @click="batchDialog = true">
           <q-tooltip>Modell auf allen offenen Bildern testen und Vorschläge speichern</q-tooltip>
         </q-btn>
+        <q-btn color="secondary" outline icon="move_to_inbox" label="Client" dense no-caps no-wrap class="col q-py-xs" @click="clientDialog = true">
+          <q-tooltip>Client-Annotationen einlesen: Bilder und Annotationen vom Kunden-Annotationsdienst holen</q-tooltip>
+        </q-btn>
         <q-btn flat round dense icon="refresh" @click="reload"><q-tooltip>Neu laden</q-tooltip></q-btn>
       </div>
       <div v-if="runningBatch" class="cursor-pointer" @click="batchDialog = true">
@@ -44,7 +47,12 @@
         <div class="text-caption text-primary">Batch-Download: {{ download.done }} / {{ download.total }}</div>
         <q-linear-progress :value="download.total ? download.done / download.total : 0" color="primary" rounded />
       </div>
+      <div v-if="clientImport" class="cursor-pointer" @click="clientDialog = true">
+        <div class="text-caption text-secondary">Client-Import: {{ clientImport.done }} / {{ clientImport.total }}</div>
+        <q-linear-progress :value="clientImport.total ? clientImport.done / clientImport.total : 0" color="secondary" rounded />
+      </div>
       <UrlDownloadDialog v-model="downloadDialog" @progress="(p) => (download = p)" @finished="onDownloadFinished" />
+      <ClientImportDialog v-model="clientDialog" @progress="(p) => (clientImport = p)" @finished="onClientImportFinished" />
       <BatchTestDialog v-model="batchDialog" @running="(b) => (runningBatch = b)" @finished="onBatchFinished" />
       <input ref="fileInput" type="file" accept="image/jpeg,image/png,image/webp,image/bmp" multiple hidden @change="onFiles" />
       <q-btn v-if="filter === 'duplicates'" outline color="secondary" icon="compare" label="Duplikate prüfen und entscheiden" dense no-caps to="/duplicates" />
@@ -65,7 +73,7 @@
             <q-img :src="api.thumbnailUrl(img.id)" width="96px" :ratio="16 / 9" class="rounded-borders" loading="lazy" />
           </q-item-section>
           <q-item-section>
-            <q-item-label class="ellipsis">#{{ img.id }} {{ img.original_filename }}</q-item-label>
+            <q-item-label class="ellipsis" :title="img.original_filename ?? undefined">#{{ img.id }} {{ fmtMiddle(img.original_filename, 18) }}</q-item-label>
             <q-item-label caption>
               <q-badge v-if="img.annotation_status === 'unlabeled'" outline color="grey-5" label="offen" />
               <q-badge v-else-if="img.annotation_count === 0" outline color="secondary" label="negativ" />
@@ -110,8 +118,9 @@ import { useQuasar } from 'quasar'
 import { useRoute } from 'vue-router'
 import BatchTestDialog from './BatchTestDialog.vue'
 import UrlDownloadDialog, { type DownloadProgress } from './UrlDownloadDialog.vue'
+import ClientImportDialog, { type ClientImportProgress } from './ClientImportDialog.vue'
 import { GLOSSARY } from '@/glossary'
-import { api, errorMessage, isErrorAnalysis, type BatchTest, type ImageItem, type NavFilter } from '@/services/api'
+import { api, errorMessage, fmtMiddle, isErrorAnalysis, type BatchTest, type ImageItem, type NavFilter } from '@/services/api'
 
 const props = defineProps<{ selectedId: number | null }>()
 const emit = defineEmits<{ select: [id: number]; filterChange: [filter: NavFilter]; batchFinished: [] }>()
@@ -153,6 +162,8 @@ const batchDialog = ref(false)
 const runningBatch = ref<BatchTest | null>(null)
 const downloadDialog = ref(false)
 const download = ref<DownloadProgress | null>(null)
+const clientDialog = ref(false)
+const clientImport = ref<ClientImportProgress | null>(null)
 const items = ref<ImageItem[]>([])
 const total = ref(0)
 const loading = ref(false)
@@ -254,6 +265,15 @@ function onDownloadFinished(p: DownloadProgress) {
     caption: p.done < p.total ? `abgebrochen nach ${p.done} von ${p.total} URLs` : undefined,
   })
   if (p.created) reload()
+}
+
+function onClientImportFinished(p: ClientImportProgress) {
+  $q.notify({
+    type: p.failed ? 'warning' : 'positive',
+    message: `Client-Import: ${p.created} neu, ${p.duplicates} Duplikate · ${p.annotated} annotiert übernommen, ${p.suggestions} mit Vorschlägen${p.failed ? `, ${p.failed} Fehler` : ''}`,
+    caption: p.done < p.total ? `abgebrochen nach ${p.done} von ${p.total} Bildern` : undefined,
+  })
+  if (p.created || p.annotated || p.suggestions) reload()
 }
 
 function onBatchFinished(b: BatchTest) {

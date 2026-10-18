@@ -28,7 +28,13 @@ body {
 ::-webkit-scrollbar-thumb { background: var(--app-border); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--app-border-strong); }
 
+/* scroll areas only scroll vertically: long unbreakable text (e.g. a file name with a 128-character hash)
+   is cut off with an ellipsis instead of widening the content beyond the column */
+.q-scrollarea__content { width: 100%; }
+.q-item__section--main { min-width: 0; }
+
 /* ---- helpers used by the pages ---- */
+.break-all { word-break: break-all; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .log-view {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

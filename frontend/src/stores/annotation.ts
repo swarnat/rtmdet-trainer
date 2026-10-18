@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { api, type AnnotationType, type ClassName, type DetectResponse, type ImageDetail } from '@/services/api'
+import { api, type AnnotationInput, type AnnotationType, type ClassName, type DetectResponse, type ImageDetail } from '@/services/api'
 import { useClassesStore } from './classes'
 
 /** A box being edited in the UI (original image pixel coordinates). */
@@ -20,6 +20,9 @@ export interface EditBox {
 export interface Prediction extends EditBox {
   confidence: number
 }
+
+/** Stores the boxes of an image and returns it again (default: the training system's API). */
+export type AnnotationSaver = (id: number, annotations: AnnotationInput[], markLabeled: boolean) => Promise<ImageDetail>
 
 let counter = 0
 const uid = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${(counter++).toString(36)}`
@@ -228,12 +231,12 @@ export const useAnnotationStore = defineStore('annotation', () => {
     fromErrorMark.value = null
   }
 
-  async function save(markLabeled = true) {
+  async function save(markLabeled = true, saver: AnnotationSaver = api.saveAnnotations) {
     // a save is already running (double click, held Ctrl+S): ignore, the running one stores the same boxes
     if (!image.value || saving.value) return false
     saving.value = true
     try {
-      const detail = await api.saveAnnotations(
+      const detail = await saver(
         image.value.id,
         boxes.value.map((b) => ({
           class: b.class,

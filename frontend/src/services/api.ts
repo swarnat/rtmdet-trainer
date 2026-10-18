@@ -419,6 +419,42 @@ export type Settings = Record<string, unknown> & {
   deployment_url: string
   /** write-only: '********' when set, '' when not set */
   deployment_access_key: string
+  /** client annotator (customer server) */
+  client_annotator_url: string
+  /** write-only like deployment_access_key */
+  client_annotator_access_key: string
+  /** inference server as seen from the customer server ('' = deployment_url) */
+  client_inference_url: string
+}
+
+export interface ClientAnnotatorStatus {
+  configured: boolean
+  url: string | null
+  reachable: boolean
+  error: string | null
+  /** configuration on the client (null = not pushed yet) */
+  config: { classes: { name: string; label: string; color: string }[]; inference_url: string; confidence: number; pushed_at: string } | null
+  counts: { total: number; open: number; annotated: number } | null
+}
+
+export interface ClientImageSummary {
+  id: number
+  filename: string | null
+  status: 'open' | 'annotated'
+  annotations: number
+  /** detections of the latest check against the inference server (null = not checked) */
+  detections: number | null
+}
+
+export interface ClientImportResult {
+  client_id: number
+  filename: string | null
+  status: 'created' | 'duplicate' | 'deleted' | 'error'
+  image_id: number | null
+  /** annotations: saved as labeled; suggestions: client check stored as suggestions; kept: already labeled here */
+  applied: 'annotations' | 'suggestions' | 'kept' | 'none'
+  client_deleted: boolean
+  error: string | null
 }
 
 export interface DeploymentStatus {
@@ -428,6 +464,26 @@ export interface DeploymentStatus {
   model: { version: string; architecture: string | null; class_names: string[]; input_width: number; input_height: number; installed_at: string | null } | null
   error: string | null
   /** problems reported by the production system, e.g. missing CPU instruction sets */
+  warnings: string[]
+}
+
+/** what a system reset deletes (and whether it is possible now) */
+export interface ResetPreview {
+  images: number
+  annotations: number
+  training_runs: number
+  models_deleted: string[]
+  /** COCO bootstrap models with default classes only */
+  models_kept: string[]
+  /** default classes after the reset */
+  classes: string[]
+  /** active jobs that block the reset */
+  blocked_by: string[]
+}
+
+export interface ResetResult extends Omit<ResetPreview, 'blocked_by'> {
+  production_model: string | null
+  bootstrap_queued: boolean
   warnings: string[]
 }
 
@@ -641,11 +697,23 @@ export const api = {
   deploymentStatus: () => request<DeploymentStatus>('/deployment'),
   deployModel: (version: string) => request<{ version: string }>('/deployment', json('POST', { version })),
 
+  // client annotator (customer server)
+  clientAnnotatorStatus: () => request<ClientAnnotatorStatus>('/client-annotator'),
+  pushClientConfig: () => request<Record<string, unknown>>('/client-annotator/config', { method: 'POST' }),
+  listClientImages: () =>
+    request<{ counts: { total: number; open: number; annotated: number }; items: ClientImageSummary[] }>('/client-annotator/images'),
+  importClientImage: (id: number, signal?: AbortSignal) =>
+    request<ClientImportResult>(`/client-annotator/images/${id}/import`, { method: 'POST', signal }),
+
   // backups
   listBackups: () => request<BackupList>('/backups'),
   startBackup: () => request<Backup>('/backups', { method: 'POST' }),
   deleteBackup: (name: string) => request<void>(`/backups/${name}`, { method: 'DELETE' }),
   backupDownloadUrl: (name: string) => `${BASE}/backups/${name}/download`,
+
+  // system reset
+  resetPreview: () => request<ResetPreview>('/system/reset'),
+  resetSystem: (confirm: string) => request<ResetResult>('/system/reset', json('POST', { confirm })),
 
   // settings
   getSettings: () => request<{ values: Settings; defaults: Settings }>('/settings'),
@@ -660,6 +728,13 @@ export function errorMessage(e: unknown): string {
 
 export function fmtPct(v: number | null | undefined, digits = 1): string {
   return v === null || v === undefined ? '–' : `${(v * 100).toFixed(digits)} %`
+}
+
+/** Shortens long text in the middle, so start and end stay visible (e.g. "a4abd4448c49…d50551afe62.jpg"). */
+export function fmtMiddle(text: string | null | undefined, max = 40): string {
+  if (!text || text.length <= max) return text ?? ''
+  const tail = Math.ceil((max - 1) * 0.4)
+  return `${text.slice(0, max - 1 - tail)}…${text.slice(-tail)}`
 }
 
 export function fmtDate(v: string | null | undefined): string {

@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:client": "vite --mode client --open /client.html",
     "build": "vue-tsc --noEmit && vite build",
+    "build:client": "vue-tsc --noEmit && vite build --mode client",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -1,0 +1,27 @@
+# Client annotator - standalone stack on the customer server, independent of the training stack
+#   cd client-annotator && cp .env.example .env   (set CLIENT_ACCESS_TOKEN)
+#   docker compose up -d --build       (or with a prebuilt image: docker compose pull && docker compose up -d --no-build)
+# The training system pushes the configuration (Einstellungen → Kunden-Annotationsdienst), fetches the images with
+# their annotations ("Client-Annotationen einlesen") and deletes them here afterwards.
+name: object-detection-client-annotator
+
+services:
+  client-annotator:
+    build:
+      context: ..
+      dockerfile: client-annotator/Dockerfile
+    # built with `make client-annotator` in the repository root
+    image: ${CLIENT_ANNOTATOR_IMAGE:-swarnat/rtmdet-client-annotator}:${CLIENT_ANNOTATOR_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      CLIENT_ACCESS_TOKEN: ${CLIENT_ACCESS_TOKEN:?set CLIENT_ACCESS_TOKEN in .env (at least 16 characters)}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
+      DOWNLOAD_PROXY: ${DOWNLOAD_PROXY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - data:/data
+    ports:
+      - "${CLIENT_ANNOTATOR_PORT:-8200}:8000"
+
+volumes:
+  data:
