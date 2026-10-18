@@ -60,6 +60,9 @@ class ConfigIn(BaseModel):
 
 class ConfigOut(ConfigIn):
     pushed_at: str
+    # "env": confidence comes from CHECK_CONFIDENCE and overrides the pushed value (pushed_confidence)
+    confidence_source: Literal["pushed", "env"] = "pushed"
+    pushed_confidence: Optional[float] = None
 
 
 class AnnotationIn(BaseModel):
@@ -198,8 +201,18 @@ def get_image_or_404(store: Store, image_id: int) -> dict[str, Any]:
     return image
 
 
-def get_config_or_409(store: Store) -> dict[str, Any]:
-    config = store.get_config()
+def effective_config(config: Optional[dict[str, Any]], settings: Settings) -> Optional[dict[str, Any]]:
+    """The pushed configuration with CHECK_CONFIDENCE applied (if set)."""
+    if config is None:
+        return None
+    pushed = config["confidence"]
+    if settings.check_confidence is None:
+        return {**config, "confidence_source": "pushed", "pushed_confidence": pushed}
+    return {**config, "confidence": settings.check_confidence, "confidence_source": "env", "pushed_confidence": pushed}
+
+
+def get_config_or_409(store: Store, settings: Settings) -> dict[str, Any]:
+    config = effective_config(store.get_config(), settings)
     if config is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "not configured yet: push the configuration from the training system")
     return config
@@ -244,21 +257,21 @@ def logout() -> Response:
 
 @app.get(f"{API_PREFIX}/config", response_model=Optional[ConfigOut], tags=["config"], dependencies=auth,
          summary="Configuration pushed by the training system (null = none yet)")
-def get_config(store: Store = Depends(get_store)) -> Optional[ConfigOut]:
-    config = store.get_config()
+def get_config(store: Store = Depends(get_store), settings: Settings = Depends(get_settings)) -> Optional[ConfigOut]:
+    config = effective_config(store.get_config(), settings)
     return ConfigOut(**config) if config else None
 
 
 @app.put(f"{API_PREFIX}/config", response_model=ConfigOut, tags=["config"], dependencies=auth,
          summary="Replace the configuration (classes, inference server, confidence)")
-def put_config(body: ConfigIn, store: Store = Depends(get_store)) -> ConfigOut:
+def put_config(body: ConfigIn, store: Store = Depends(get_store), settings: Settings = Depends(get_settings)) -> ConfigOut:
     names = [c.name for c in body.classes]
     if len(set(names)) != len(names):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "class names must be unique")
-    config = ConfigOut(**body.model_dump(), pushed_at=utcnow())
-    store.set_config(config.model_dump())
+    config = {**body.model_dump(), "pushed_at": utcnow()}
+    store.set_config(config)
     log.info("configuration pushed (%d classes, inference server %s)", len(names), body.inference_url or "-")
-    return config
+    return ConfigOut(**effective_config(config, settings))
 
 
 @app.get(f"{API_PREFIX}/images", response_model=ImageList, tags=["images"], dependencies=auth,
@@ -321,9 +334,10 @@ def image_thumbnail(image_id: int, store: Store = Depends(get_store)) -> FileRes
 
 @app.put(f"{API_PREFIX}/images/{{image_id}}/annotations", response_model=ImageOut, tags=["images"], dependencies=auth,
          summary="Replace all annotations of an image (original pixel coordinates)")
-def save_annotations(image_id: int, body: AnnotationsSave, store: Store = Depends(get_store)) -> ImageOut:
+def save_annotations(image_id: int, body: AnnotationsSave, store: Store = Depends(get_store),
+                     settings: Settings = Depends(get_settings)) -> ImageOut:
     image = get_image_or_404(store, image_id)
-    known = {c["name"] for c in get_config_or_409(store)["classes"]}
+    known = {c["name"] for c in get_config_or_409(store, settings)["classes"]}
     boxes = []
     for index, item in enumerate(body.annotations):
         if item.class_name not in known:
@@ -350,9 +364,10 @@ def update_image(image_id: int, body: StatusUpdate, store: Store = Depends(get_s
 
 @app.post(f"{API_PREFIX}/images/{{image_id}}/detect", response_model=ImageOut, tags=["images"], dependencies=auth,
           summary="Check the image against the inference server and store its detections")
-def detect(image_id: int, body: Optional[DetectRequest] = None, store: Store = Depends(get_store)) -> ImageOut:
+def detect(image_id: int, body: Optional[DetectRequest] = None, store: Store = Depends(get_store),
+           settings: Settings = Depends(get_settings)) -> ImageOut:
     image = get_image_or_404(store, image_id)
-    config = get_config_or_409(store)
+    config = get_config_or_409(store, settings)
     if not config.get("inference_url"):
         raise HTTPException(status.HTTP_409_CONFLICT, "no inference server configured")
     confidence = body.confidence if body and body.confidence is not None else config["confidence"]

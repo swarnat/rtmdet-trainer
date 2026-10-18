@@ -12,7 +12,10 @@ export interface ClientConfig {
   classes: ClientClass[]
   /** inference server as seen from the customer server ("" = no checks) */
   inference_url: string
+  /** effective value: CHECK_CONFIDENCE of the service if set, else the pushed one */
   confidence: number
+  confidence_source: 'pushed' | 'env'
+  pushed_confidence: number | null
   source: string | null
   pushed_at: string
 }

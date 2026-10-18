@@ -433,7 +433,14 @@ export interface ClientAnnotatorStatus {
   reachable: boolean
   error: string | null
   /** configuration on the client (null = not pushed yet) */
-  config: { classes: { name: string; label: string; color: string }[]; inference_url: string; confidence: number; pushed_at: string } | null
+  config: {
+    classes: { name: string; label: string; color: string }[]
+    inference_url: string
+    /** effective value on the client: its CHECK_CONFIDENCE ('env') overrides the pushed one */
+    confidence: number
+    confidence_source?: 'pushed' | 'env'
+    pushed_at: string
+  } | null
   counts: { total: number; open: number; annotated: number } | null
 }
 

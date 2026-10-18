@@ -67,6 +67,7 @@ Alle Aufrufe außer `/health` brauchen den Token: `X-Access-Key: …`, `Authoriz
 | `CLIENT_ANNOTATOR_PORT` | `8200` | Port auf dem Host |
 | `MAX_UPLOAD_MB` | `50` | Größenlimit pro Bild |
 | `DOWNLOAD_PROXY` | – | optionaler Proxy für den Batch-Download, z. B. `http://proxy-host:8888` |
+| `CHECK_CONFIDENCE` | – | Confidence für Prüfungen gegen den Inference-Server (z. B. `0.4`); gesetzt: überschreibt den vom Trainingssystem übertragenen Wert, leer: der übertragene Wert gilt. Der Regler in der Oberfläche startet mit diesem Wert |
 
 ## Entwicklung & Tests
 

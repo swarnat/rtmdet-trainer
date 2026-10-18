@@ -142,3 +142,30 @@ def test_delete_removes_files(configured, tmp_path):
     assert list((tmp_path / "data" / "thumbnails").iterdir()) == []
     # the same image can be loaded again afterwards (next batch)
     assert upload(configured, jpeg(1))[0]["status"] == "created"
+
+
+def test_check_confidence_from_env_overrides_pushed_value(configured, inference, monkeypatch):
+    from app.config import get_settings
+
+    monkeypatch.setenv("CHECK_CONFIDENCE", "0.55")
+    get_settings.cache_clear()
+    config = configured.get("/api/v1/config").json()
+    assert (config["confidence"], config["confidence_source"], config["pushed_confidence"]) == (0.55, "env", 0.3)
+    # a new push keeps the override
+    assert configured.put("/api/v1/config", json={**CONFIG, "confidence": 0.2}).json()["confidence"] == 0.55
+    image = upload(configured, jpeg(1))[0]["image"]
+    configured.post(f"/api/v1/images/{image['id']}/detect")
+    assert b'name="confidence"\r\n\r\n0.55' in inference.requests[-1].content
+    # an explicit value of the request (slider in the web UI) still wins
+    configured.post(f"/api/v1/images/{image['id']}/detect", json={"confidence": 0.7})
+    assert b'name="confidence"\r\n\r\n0.7' in inference.requests[-1].content
+
+
+@pytest.mark.parametrize("value", ["", "  "])
+def test_empty_check_confidence_uses_pushed_value(configured, monkeypatch, value):
+    from app.config import get_settings
+
+    monkeypatch.setenv("CHECK_CONFIDENCE", value)
+    get_settings.cache_clear()
+    config = configured.get("/api/v1/config").json()
+    assert (config["confidence"], config["confidence_source"]) == (0.3, "pushed")

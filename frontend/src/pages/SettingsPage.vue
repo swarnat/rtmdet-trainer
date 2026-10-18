@@ -342,7 +342,10 @@ async function testClient() {
       clientConnection.value = {
         ok: true,
         text: `Verbunden – ${c?.annotated ?? 0} annotiert, ${c?.open ?? 0} offen · ` +
-          (st.config ? `Konfiguration vom ${fmtDate(st.config.pushed_at)} (${st.config.classes.length} Klassen)` : 'noch keine Konfiguration übertragen'),
+          (st.config
+            ? `Konfiguration vom ${fmtDate(st.config.pushed_at)} (${st.config.classes.length} Klassen, Confidence ${st.config.confidence}` +
+              `${st.config.confidence_source === 'env' ? ' – dort per CHECK_CONFIDENCE überschrieben' : ''})`
+            : 'noch keine Konfiguration übertragen'),
       }
     }
   } catch (e) {

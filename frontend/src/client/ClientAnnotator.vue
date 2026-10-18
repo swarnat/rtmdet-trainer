@@ -6,6 +6,7 @@
       <div class="col text-caption text-muted ellipsis" style="min-width: 0">
         <template v-if="config">
           {{ config.classes.length }} Klassen · Inference: {{ config.inference_url || 'nicht konfiguriert' }} · Confidence ≥ {{ config.confidence }}
+          <template v-if="config.confidence_source === 'env'">(CHECK_CONFIDENCE, übertragen: {{ config.pushed_confidence }})</template>
           · übertragen {{ fmtDate(config.pushed_at) }}
         </template>
         <span v-else class="text-warning">Noch nicht konfiguriert – im Trainingssystem „Konfiguration übertragen“.</span>

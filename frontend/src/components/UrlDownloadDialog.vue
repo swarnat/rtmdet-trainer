@@ -1,5 +1,5 @@
 <template>
-  <q-dialog :model-value="modelValue" @update:model-value="(v) => emit('update:modelValue', v)">
+  <q-dialog :model-value="modelValue" @update:model-value="(v) => emit('update:modelValue', v)" @hide="clearIfIdle">
     <q-card style="width: 640px; max-width: 95vw">
       <q-card-section class="row items-center">
         <div class="text-h6">Batch-Download</div>
@@ -140,7 +140,14 @@ async function start() {
     abort = null
     emit('progress', null)
     emit('finished', { ...progress })
+    // closed while the download ran in the background: clear now
+    if (!props.modelValue) clearIfIdle()
   }
+}
+
+/** after closing, the URL list starts empty (a running download keeps its list until it is finished) */
+function clearIfIdle() {
+  if (!running.value) text.value = ''
 }
 
 function cancel() {

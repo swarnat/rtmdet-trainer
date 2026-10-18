@@ -17,6 +17,7 @@ services:
       CLIENT_ACCESS_TOKEN: ${CLIENT_ACCESS_TOKEN:?set CLIENT_ACCESS_TOKEN in .env (at least 16 characters)}
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
       DOWNLOAD_PROXY: ${DOWNLOAD_PROXY:-}
+      CHECK_CONFIDENCE: ${CHECK_CONFIDENCE:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - data:/data
