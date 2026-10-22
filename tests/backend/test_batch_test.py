@@ -263,11 +263,11 @@ def test_find_errors_skips_detections_in_ignore_regions():
         {"class": "person", "confidence": 0.9, "bbox": box(0, 0, 100, 100)},      # TP
         {"class": "person", "confidence": 0.8, "bbox": box(220, 220, 280, 290)},  # inside the region: no error
         {"class": "person", "confidence": 0.7, "bbox": box(400, 400, 500, 500)},  # elsewhere: FP
-        {"class": "vehicle", "confidence": 0.6, "bbox": box(220, 220, 280, 290)}, # region is for persons: FP
+        {"class": "vehicle", "confidence": 0.6, "bbox": box(220, 220, 280, 290)}, # the region applies to every class
     ]
     gts = [{"class": "person", "bbox": box(0, 0, 100, 100)}]
     ignore = [{"class": "person", "bbox": box(200, 200, 300, 300)}]
     tp, fps, fns = find_errors(dets, gts, ignore=ignore)
     assert tp == 1 and fns == []
-    assert [(d["class"], d["confidence"]) for d in fps] == [("person", 0.7), ("vehicle", 0.6)]
+    assert [(d["class"], d["confidence"]) for d in fps] == [("person", 0.7)]
     assert len(find_errors(dets, gts)[1]) == 3  # without regions the detection in it is a false positive

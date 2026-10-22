@@ -110,13 +110,16 @@ def coco_map(coco_gt: dict, preds: dict[int, list], class_names: tuple[str, ...]
 def precision_recall(coco_gt: dict, preds: dict[int, list], class_names: tuple[str, ...], conf: float, iou_thr: float = 0.5) -> dict:
     """Greedy matching per image and class at a fixed confidence threshold.
 
-    Ignore regions (``iscrowd``) are neither missed objects nor a reason for false positives:
-    unmatched detections mostly inside one of its class are skipped.
+    Ignore regions (``iscrowd``, they apply to every class) are neither missed objects nor a reason
+    for false positives: unmatched detections mostly inside one of them are skipped.
     """
     gts: dict[tuple[int, int], list] = {}
-    ignore: dict[tuple[int, int], list] = {}
+    ignore: dict[int, dict[tuple, list]] = {}
     for a in coco_gt["annotations"]:
-        (ignore if a.get("iscrowd") else gts).setdefault((a["image_id"], a["category_id"] - 1), []).append(a)
+        if a.get("iscrowd"):  # exported once per class: keep one per box
+            ignore.setdefault(a["image_id"], {})[tuple(a["bbox"])] = a["bbox"]
+        else:
+            gts.setdefault((a["image_id"], a["category_id"] - 1), []).append(a)
 
     keys = list(class_names) + list(AREA_RANGES)
     tp = {k: 0 for k in keys}
@@ -134,7 +137,7 @@ def precision_recall(coco_gt: dict, preds: dict[int, list], class_names: tuple[s
             g_used = np.zeros(len(cg), dtype=bool)
             d_boxes = np.array([[d.x1, d.y1, d.x2, d.y2] for d in cd]).reshape(-1, 4)
             ious = box_iou(d_boxes, g_boxes) if len(cd) and len(cg) else np.zeros((len(cd), len(cg)))
-            regions = np.array([xywh_to_xyxy(g["bbox"]) for g in ignore.get((img_id, c), [])]).reshape(-1, 4)
+            regions = np.array([xywh_to_xyxy(b) for b in ignore.get(img_id, {}).values()]).reshape(-1, 4)
             covered = box_ioa(d_boxes, regions).max(axis=1) >= IGNORE_COVERAGE if len(cd) and len(regions) else np.zeros(len(cd), bool)
             for i, d in enumerate(cd):
                 best, best_j = iou_thr, -1

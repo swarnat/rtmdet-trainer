@@ -8,10 +8,15 @@
       @dragstart="onSelect"
       @dragmove="onDragMove"
       @dragend="onDragEnd"
+      @transform="onTransform"
       @transformend="onTransformEnd"
       @mouseenter="hover = true"
       @mouseleave="hover = false"
     />
+    <!-- ignore region: struck through (both diagonals) -->
+    <template v-if="ignored">
+      <v-line v-for="(points, i) in strike" :key="i" :config="{ points, stroke: color, strokeWidth: 2, strokeScaleEnabled: false, opacity: 0.85, listening: false }" />
+    </template>
     <v-label :config="{ x: box.x1, y: labelY, listening: false, opacity: prediction && !selected ? 0.8 : 1 }">
       <v-tag :config="{ fill: hardNegative ? '#0f172a' : ignored ? '#475569' : color, stroke: hardNegative ? color : undefined, strokeWidth: 1, cornerRadius: 2 / scale }" />
       <v-text :config="textConfig" />
@@ -41,12 +46,19 @@ const emit = defineEmits<{
 
 const classes = useClassesStore()
 const hover = ref(false)
-const color = computed(() => classes.info(props.box.class).color)
+// an ignore region applies to every class: neutral colour instead of the class colour
+const color = computed(() => (ignored.value ? '#94a3b8' : classes.info(props.box.class).color))
 // hard negative = known false positive of the model (never a real object)
 const hardNegative = computed(() => !props.prediction && props.box.type === 'hard_negative')
 // ignore region = neither object nor background (not trained, not evaluated)
 const ignored = computed(() => !props.prediction && props.box.type === 'ignore')
 const reflected = computed(() => !props.prediction && !!props.box.reflected)
+// geometry while dragging/resizing (the box itself only changes when the edit is finished)
+const live = ref<{ x: number; y: number; w: number; h: number } | null>(null)
+const strike = computed(() => {
+  const { x, y, w, h } = live.value ?? { x: props.box.x1, y: props.box.y1, w: props.box.x2 - props.box.x1, h: props.box.y2 - props.box.y1 }
+  return [[x, y, x + w, y + h], [x + w, y, x, y + h]]
+})
 const width = computed(() => props.box.x2 - props.box.x1)
 const height = computed(() => props.box.y2 - props.box.y1)
 
@@ -89,7 +101,7 @@ const labelText = computed(() => {
   if (props.prediction && 'confidence' in props.box) return `⚡ ${info.label} ${(props.box.confidence * 100).toFixed(0)}%`
   if (hardNegative.value) return `⊘ HN: kein(e) ${info.label}`
   const suffix = reflected.value ? ' ⇋ Spiegelung' : ''
-  if (ignored.value) return `∅ ignorieren: ${info.label}${suffix}`
+  if (ignored.value) return `∅ ignorieren${suffix}`
   return (props.box.source === 'prediction' ? `${info.label} ✓` : info.label) + suffix
 })
 const textConfig = computed(() => ({
@@ -114,11 +126,19 @@ function onDragMove(e: any) {
   const node = e.target
   node.x(Math.max(0, Math.min(props.imageWidth - node.width(), node.x())))
   node.y(Math.max(0, Math.min(props.imageHeight - node.height(), node.y())))
+  live.value = { x: node.x(), y: node.y(), w: node.width(), h: node.height() }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function onTransform(e: any) {
+  const node = e.target
+  live.value = { x: node.x(), y: node.y(), w: node.width() * node.scaleX(), h: node.height() * node.scaleY() }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function onDragEnd(e: any) {
   const node = e.target
+  live.value = null
   emit('change', props.box.uid, { x1: node.x(), y1: node.y(), x2: node.x() + node.width(), y2: node.y() + node.height() })
 }
 
@@ -129,6 +149,7 @@ function onTransformEnd(e: any) {
   const h = Math.max(1, node.height() * node.scaleY())
   node.scaleX(1)
   node.scaleY(1)
+  live.value = null
   emit('change', props.box.uid, { x1: node.x(), y1: node.y(), x2: node.x() + w, y2: node.y() + h })
 }
 </script>

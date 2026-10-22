@@ -27,7 +27,7 @@ export const GLOSSARY = {
   ignoreRegion:
     'Ignorierter Bereich: Eine Stelle, die weder Objekt noch Hintergrund ist (z. B. ein verdecktes, abgeschnittenes oder nicht eindeutiges Objekt). ' +
     'Das Training bestraft dort keine Erkennung, und in der Auswertung zählt eine Erkennung dort weder als Treffer noch als Fehlalarm. ' +
-    'Der Bereich gilt nur für seine Klasse.',
+    'Der Bereich gilt für alle Klassen, die gewählte Klasse spielt dafür keine Rolle.',
   reflected:
     'Spiegelung: Das Objekt ist nur eine Spiegelung (Fenster, Spiegel, Pfütze …). Die Markierung ändert das Training nicht, ' +
     'sie dient dazu, diese Boxen später getrennt zu betrachten.',

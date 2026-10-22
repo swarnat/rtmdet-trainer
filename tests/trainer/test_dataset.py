@@ -144,12 +144,19 @@ def test_ignore_regions_become_crowd_boxes_and_reflections_are_marked():
     img.annotations += image(1, [("person", 600, 100, 700, 300)], reflected=True).annotations
     only_ignore = image(2, [("person", 50, 50, 150, 250)], type="ignore")  # nothing but an ignore region
     coco = build_coco([img, only_ignore], ["person", "vehicle"])
-    assert [(a["image_id"], a["iscrowd"], a.get("reflected", False)) for a in coco["annotations"]] == [
-        (1, 0, False), (1, 1, False), (1, 0, True), (2, 1, False)]
+    # an ignore region applies to every class of the run: one crowd box per class
+    assert [(a["image_id"], a["category_id"], a["iscrowd"], a.get("reflected", False)) for a in coco["annotations"]] == [
+        (1, 1, 0, False), (1, 1, 1, False), (1, 2, 1, False), (1, 1, 0, True), (2, 1, 1, False), (2, 2, 1, False)]
     stats = split_stats(coco)
     # an ignore region is not a box and does not make an image positive
     assert stats["boxes"] == 2 and stats["negative_images"] == 1 and stats["boxes_per_class"] == {"person": 2, "vehicle": 0}
-    assert stats["ignore_regions"] == 2 and stats["reflected_boxes"] == 1
+    assert stats["ignore_regions"] == 2 and stats["reflected_boxes"] == 1  # regions, not one per class
+
+
+def test_ignore_region_applies_to_classes_other_than_its_own():
+    other = image(1, [("battery", 300, 300, 400, 500)], type="ignore")  # drawn as a class that is not part of the run
+    coco = build_coco([other], ["person", "vehicle"])
+    assert [(a["category_id"], a["iscrowd"]) for a in coco["annotations"]] == [(1, 1), (2, 1)]
 
 
 def test_precision_recall_does_not_count_ignore_regions():
@@ -160,10 +167,10 @@ def test_precision_recall_does_not_count_ignore_regions():
         Detection(0, 0.9, 0, 0, 100, 100),      # TP
         Detection(0, 0.8, 220, 220, 300, 300),  # inside the ignore region: no FP
         Detection(0, 0.7, 380, 380, 520, 520),  # mostly outside it: FP
-        Detection(1, 0.6, 220, 220, 300, 300),  # the region is for persons only: FP
+        Detection(1, 0.6, 220, 220, 300, 300),  # another class in the region: ignored as well
     ]}
     res = precision_recall(coco, preds, ("person", "vehicle"), conf=0.25)
-    assert res["overall"] == {"precision": 1 / 3, "recall": 1.0, "tp": 1, "fp": 2, "fn": 0}  # the region is no missed object
+    assert res["overall"] == {"precision": 1 / 2, "recall": 1.0, "tp": 1, "fp": 1, "fn": 0}  # the region is no missed object
 
 
 def test_coco_map_ignores_detections_in_ignore_regions():
@@ -176,3 +183,18 @@ def test_coco_map_ignores_detections_in_ignore_regions():
     assert num_boxes(coco) == 1
     hit, in_region = Detection(0, 0.9, 0, 0, 100, 100), Detection(0, 0.95, 220, 220, 300, 300)
     assert coco_map(coco, {1: [hit, in_region]}, ("person",))["overall"]["mAP50"] == pytest.approx(1.0)
+
+
+def test_coco_map_ignores_other_class_detections_in_ignore_regions():
+    pytest.importorskip("pycocotools")
+    from trainer.evaluate import coco_map
+
+    img = image(1, [("person", 0, 0, 100, 100)])
+    img.annotations += image(1, [("person", 200, 200, 400, 400)], type="ignore").annotations
+    coco = build_coco([img], ["person", "vehicle"])
+    hit = Detection(0, 0.9, 0, 0, 100, 100)
+    vehicle_in_region = Detection(1, 0.95, 220, 220, 300, 300)  # class differs from the one the region was drawn with
+    with_vehicle = coco_map(coco, {1: [hit, vehicle_in_region]}, ("person", "vehicle"))
+    # vehicle has no ground truth: its mAP stays undefined instead of dropping to 0 because of a false positive
+    assert with_vehicle["per_class"]["vehicle"]["mAP50"] is None
+    assert with_vehicle["per_class"]["person"]["mAP50"] == pytest.approx(1.0)

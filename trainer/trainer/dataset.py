@@ -15,8 +15,9 @@ and immutable, and a linked image is only hidden when deleted, so the snapshot s
 Splits are persisted on the image the first time it is used and never
 re-rolled. Labeled images without boxes are included as negatives.
 
-Ignore regions (``type == "ignore"``: neither object nor background) are exported as COCO
-``iscrowd: 1`` boxes of their class. The training head (``rtmdet.ignore_head``) does not penalise
+Ignore regions (``type == "ignore"``: neither object nor background) apply to *all* classes of the
+run, whatever class was selected when drawing them. They are exported as COCO ``iscrowd: 1`` boxes,
+one per class of the run (pycocotools matches crowd boxes per category). The training head (``rtmdet.ignore_head``) does not penalise
 background predictions inside them and ``pycocotools`` / ``evaluate.precision_recall`` do not count
 detections in them as false positives. Reflections (``Annotation.reflected``) are marked with
 ``"reflected": true`` for separate analysis; they are trained like any other box.
@@ -79,7 +80,7 @@ def build_coco(images: list[Image], class_names: list[str]) -> dict:
     """Build a COCO detection dict. Category ids are 1-based in the order of ``class_names``.
 
     Boxes of classes not in ``class_names`` and hard negatives are dropped; ignore regions become
-    ``iscrowd`` boxes.
+    ``iscrowd`` boxes of every class (independent of the class they were drawn with).
     """
     class_to_id = {name: i for i, name in enumerate(class_names)}
     coco_images, coco_anns = [], []
@@ -87,23 +88,25 @@ def build_coco(images: list[Image], class_names: list[str]) -> dict:
     for img in images:
         coco_images.append({"id": img.id, "file_name": image_file_name(img), "width": img.width, "height": img.height})
         for a in img.annotations:
-            if a.class_name not in class_to_id or a.type == "hard_negative":
+            ignore = a.type == "ignore"
+            if a.type == "hard_negative" or (a.class_name not in class_to_id and not ignore):
                 continue
             x, y, w, h = xyxy_to_xywh((a.x1, a.y1, a.x2, a.y2))
             if w < 1 or h < 1:
                 continue
-            ann = {
-                "id": ann_id,
-                "image_id": img.id,
-                "category_id": class_to_id[a.class_name] + 1,
-                "bbox": [round(x, 2), round(y, 2), round(w, 2), round(h, 2)],
-                "area": round(w * h, 2),
-                "iscrowd": 1 if a.type == "ignore" else 0,
-            }
-            if a.reflected:
-                ann["reflected"] = True
-            coco_anns.append(ann)
-            ann_id += 1
+            for category in range(len(class_names)) if ignore else [class_to_id[a.class_name]]:
+                ann = {
+                    "id": ann_id,
+                    "image_id": img.id,
+                    "category_id": category + 1,
+                    "bbox": [round(x, 2), round(y, 2), round(w, 2), round(h, 2)],
+                    "area": round(w * h, 2),
+                    "iscrowd": 1 if ignore else 0,
+                }
+                if a.reflected:
+                    ann["reflected"] = True
+                coco_anns.append(ann)
+                ann_id += 1
     return {
         "info": {"description": "object-detection dataset snapshot", "date_created": datetime.now(timezone.utc).isoformat()},
         "images": coco_images,
@@ -116,10 +119,11 @@ def split_stats(coco: dict) -> dict:
     names = [c["name"] for c in sorted(coco["categories"], key=lambda c: c["id"])]
     per_class = {name: 0 for name in names}
     with_boxes = set()
-    boxes = reflected = ignore_regions = 0
+    boxes = reflected = 0
+    ignore_regions = set()
     for a in coco["annotations"]:
         if a.get("iscrowd"):  # ignore region: neither a box nor a reason to call the image positive
-            ignore_regions += 1
+            ignore_regions.add((a["image_id"], tuple(a["bbox"])))  # one entry per class: count each region once
             continue
         per_class[names[a["category_id"] - 1]] += 1
         with_boxes.add(a["image_id"])
@@ -131,7 +135,7 @@ def split_stats(coco: dict) -> dict:
         "boxes": boxes,
         "boxes_per_class": per_class,
         "reflected_boxes": reflected,
-        "ignore_regions": ignore_regions,
+        "ignore_regions": len(ignore_regions),
     }
 
 
@@ -224,7 +228,7 @@ def create_snapshot(session: Session, s3: ObjectStorage, run_id: int, local_root
                 "width": i.width,
                 "height": i.height,
                 "boxes": sum(1 for a in i.annotations if a.class_name in class_names and a.type == "positive"),
-                "ignore_regions": sum(1 for a in i.annotations if a.class_name in class_names and a.type == "ignore"),
+                "ignore_regions": sum(1 for a in i.annotations if a.type == "ignore"),
                 "hard_negatives": sum(1 for a in i.annotations if a.class_name in class_names and a.type == "hard_negative"),
             }
             for i in images
@@ -258,8 +262,7 @@ def add_hard_negative_crops(session: Session, train_coco: dict, images: list[Ima
     for img in images:
         positives = [(a.class_name, a.x1, a.y1, a.x2, a.y2) for a in img.annotations
                      if a.type == "positive" and a.class_name in class_to_id]
-        ignores = [(a.class_name, a.x1, a.y1, a.x2, a.y2) for a in img.annotations
-                   if a.type == "ignore" and a.class_name in class_to_id]
+        ignores = [(a.class_name, a.x1, a.y1, a.x2, a.y2) for a in img.annotations if a.type == "ignore"]
         for hn in img.annotations:
             if hn.type != "hard_negative" or hn.class_name not in class_to_id:
                 continue
@@ -291,7 +294,9 @@ def add_hard_negative_crops(session: Session, train_coco: dict, images: list[Ima
                     for cls, x1, y1, x2, y2 in items:
                         w, h = x2 - x1, y2 - y1
                         train_coco["annotations"].append({
-                            "id": next_ann_id, "image_id": next_image_id, "category_id": class_to_id[cls] + 1,
+                            "id": next_ann_id, "image_id": next_image_id,
+                            # ignore regions apply to every class: the category is irrelevant for the training head
+                            "category_id": class_to_id.get(cls, 0) + 1,
                             "bbox": [round(x1, 2), round(y1, 2), round(w, 2), round(h, 2)], "area": round(w * h, 2),
                             "iscrowd": crowd,
                         })

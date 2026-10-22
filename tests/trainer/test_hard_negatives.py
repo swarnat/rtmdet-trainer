@@ -149,7 +149,7 @@ def test_hard_negative_crops_keep_ignore_regions_as_crowd_boxes(tmp_path):
     ], tmp_path)
     classes = ["person", "vehicle"]
     coco = build_coco([train], classes)
-    assert [a["iscrowd"] for a in coco["annotations"]] == [1, 1]
+    assert [a["iscrowd"] for a in coco["annotations"]] == [1, 1, 1, 1]  # two regions, one crowd box per class
     add_hard_negative_crops(session, coco, [train], classes, str(tmp_path))
     for im in (im for im in coco["images"] if im["file_name"] == "hn_10.jpg"):
         anns = [a for a in coco["annotations"] if a["image_id"] == im["id"]]
