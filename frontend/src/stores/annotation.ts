@@ -144,6 +144,11 @@ export const useAnnotationStore = defineStore('annotation', () => {
     dirty.value = true
   }
 
+  function discardPrediction(id: string) {
+    predictions.value = predictions.value.filter((p) => p.uid !== id)
+    if (selectedId.value === id) selectedId.value = null
+  }
+
   function deleteSelected() {
     if (!selectedId.value) return
     if (selectedPrediction.value) {
@@ -285,6 +290,6 @@ export const useAnnotationStore = defineStore('annotation', () => {
     image, boxes, predictions, lastDetection, fromSuggestion, fromErrorMark, selectedId, activeClass, dirty, saving, history,
     selectedBox, selectedPrediction,
     load, addBox, updateBox, deleteSelected, toggleIgnoreForSelected, toggleReflectedForSelected, setClassForSelected, undo,
-    setDetection, acceptable, acceptPrediction, markHardNegative, acceptAllPredictions, clearPredictions, save,
+    setDetection, acceptable, acceptPrediction, markHardNegative, discardPrediction, acceptAllPredictions, clearPredictions, save,
   }
 })

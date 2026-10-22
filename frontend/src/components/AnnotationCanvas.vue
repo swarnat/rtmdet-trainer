@@ -48,6 +48,18 @@
         <v-transformer ref="transformerRef" :config="transformerConfig" />
       </v-layer>
     </v-stage>
+    <!-- the selected suggestion: yes (accept) / no (hard negative) / delete (discard), right below its box -->
+    <div v-if="actionBar" class="prediction-actions row no-wrap items-center" :style="actionBar.style" @mousedown.stop @wheel.stop>
+      <q-btn dense unelevated round size="sm" color="positive" icon="check" :disable="!actionBar.usable" @click="emit('accept', actionBar.uid)">
+        <q-tooltip>Ja – als Annotation übernehmen (Enter)</q-tooltip>
+      </q-btn>
+      <q-btn dense unelevated round size="sm" color="negative" icon="block" :disable="!actionBar.usable" @click="emit('reject', actionBar.uid)">
+        <q-tooltip>Nein – Fehlalarm, als Hard Negative speichern (N)</q-tooltip>
+      </q-btn>
+      <q-btn dense unelevated round size="sm" color="grey-7" icon="delete" @click="emit('discard', actionBar.uid)">
+        <q-tooltip>Löschen – Vorschlag verwerfen (Entf)</q-tooltip>
+      </q-btn>
+    </div>
     <div v-if="loading" class="absolute-center text-white">
       <q-spinner size="48px" />
     </div>
@@ -83,6 +95,10 @@ const emit = defineEmits<{
   change: [uid: string, coords: { x1: number; y1: number; x2: number; y2: number }]
   create: [coords: { x1: number; y1: number; x2: number; y2: number }]
   accept: [uid: string]
+  /** false positive of the model: store as hard negative */
+  reject: [uid: string]
+  /** drop the suggestion without storing anything */
+  discard: [uid: string]
 }>()
 
 const classes = useClassesStore()
@@ -110,6 +126,17 @@ const stageConfig = computed(() => ({
   x: view.x,
   y: view.y,
 }))
+
+const BAR_W = 108 // px, three round buttons
+const BAR_H = 34
+const actionBar = computed(() => {
+  const p = props.showPredictions ? props.predictions.find((x) => x.uid === props.selectedId) : undefined
+  if (!p || draft.value || panning.value) return null
+  const left = Math.max(4, Math.min(size.w - BAR_W - 4, view.x + p.x1 * view.scale))
+  let top = view.y + p.y2 * view.scale + 6
+  if (top + BAR_H > size.h - 4) top = Math.max(4, view.y + p.y1 * view.scale - BAR_H - 6) // no room below: above the box
+  return { uid: p.uid, usable: classes.info(p.class).active, style: { left: `${left}px`, top: `${top}px` } }
+})
 
 const cursor = computed(() => (panning.value ? 'grabbing' : spaceDown.value ? 'grab' : 'crosshair'))
 
@@ -320,6 +347,15 @@ defineExpose({ fit })
   background-size: 24px 24px;
   overflow: hidden;
   user-select: none;
+}
+.prediction-actions {
+  position: absolute;
+  gap: 6px;
+  padding: 4px 6px;
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
 }
 .canvas-hud {
   position: absolute;

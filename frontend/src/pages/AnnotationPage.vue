@@ -103,6 +103,8 @@
           @change="(id, c) => store.updateBox(id, c)"
           @create="(c) => store.addBox({ ...c, class: store.activeClass, type: 'positive', source: 'manual' })"
           @accept="(id) => store.acceptPrediction(id)"
+          @reject="(id) => store.markHardNegative(id)"
+          @discard="(id) => store.discardPrediction(id)"
         />
         <div v-else class="absolute-center text-muted text-h6">Bild links auswählen oder hochladen</div>
       </div>
