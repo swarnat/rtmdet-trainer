@@ -173,7 +173,7 @@ def run_training(run_id: int) -> None:
         from mmdet.utils import register_all_modules
 
         register_all_modules(init_default_scope=True)
-        from .rtmdet import metric  # noqa: F401  (registers DetailedCocoMetric)
+        from .rtmdet import ignore_head, metric  # noqa: F401  (register IgnoreRTMDetSepBNHead, DetailedCocoMetric)
         use_amp = torch.cuda.is_available()
         tp = TrainParams(
             base=base,

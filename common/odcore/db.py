@@ -141,8 +141,12 @@ class Annotation(Base):
     x2: Mapped[float] = mapped_column(Float, nullable=False)
     y2: Mapped[float] = mapped_column(Float, nullable=False)
     # "positive": real object; "hard_negative": region a model wrongly detected as ``class_name``
-    # (never trained as an extra class; used for background crops and regression tests)
+    # (never trained as an extra class; used for background crops and regression tests);
+    # "ignore": region that is neither positive nor negative (e.g. unclear or partly visible objects):
+    # no training loss and no false positive/negative in the evaluation
     type: Mapped[str] = mapped_column(String(16), nullable=False, default="positive", server_default="positive", index=True)
+    # the object is only a reflection (window, mirror, puddle ...); only marked to look at them separately later
+    reflected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
     # "manual" or "prediction" (accepted model prediction, then edited like any other box)
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
     # for hard negatives: confidence and model version of the false detection

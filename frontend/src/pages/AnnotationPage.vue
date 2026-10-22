@@ -75,6 +75,12 @@
         </q-select>
         <q-btn dense flat icon="undo" :disable="!store.history.length" @click="store.undo()"><q-tooltip>Rückgängig (Strg+Z)</q-tooltip></q-btn>
         <q-btn dense flat icon="delete" :disable="!store.selectedId" @click="store.deleteSelected()"><q-tooltip>Box löschen (Entf)</q-tooltip></q-btn>
+        <q-btn dense flat icon="visibility_off" :color="store.selectedBox?.type === 'ignore' ? 'warning' : undefined" :disable="!store.selectedBox" @click="store.toggleIgnoreForSelected()">
+          <q-tooltip max-width="320px">Bereich ignorieren (I): weder Objekt noch Hintergrund – wird beim Training und in der Auswertung nicht gewertet</q-tooltip>
+        </q-btn>
+        <q-btn dense flat icon="flip" :color="store.selectedBox?.reflected ? 'warning' : undefined" :disable="!store.selectedBox" @click="store.toggleReflectedForSelected()">
+          <q-tooltip max-width="320px">Als Spiegelung markieren (R): Fenster, Spiegel, Pfütze … – zum späteren getrennten Auswerten</q-tooltip>
+        </q-btn>
         <q-btn dense unelevated color="primary" icon="save" label="Speichern" no-caps no-wrap :loading="store.saving" :disable="!store.image" @click="save(false)">
           <q-tooltip>Speichern und als annotiert markieren (Strg+S)</q-tooltip>
         </q-btn>
@@ -163,7 +169,10 @@
                 <span class="class-dot" :style="{ background: classes.info(b.class).color }" />
               </q-item-section>
               <q-item-section>
-                <q-item-label>{{ i + 1 }}. {{ classes.info(b.class).label }}<span v-if="b.source === 'prediction'" class="text-muted"> (übernommen)</span></q-item-label>
+                <q-item-label>
+                  {{ i + 1 }}. {{ classes.info(b.class).label }}<span v-if="b.source === 'prediction'" class="text-muted"> (übernommen)</span>
+                  <q-icon v-if="b.reflected" name="flip" size="xs" class="q-ml-xs"><q-tooltip>Spiegelung</q-tooltip></q-icon>
+                </q-item-label>
                 <q-item-label v-if="ui.advanced" caption class="mono">
                   {{ Math.round(b.x1) }},{{ Math.round(b.y1) }} – {{ Math.round(b.x2) }},{{ Math.round(b.y2) }}
                 </q-item-label>
@@ -195,6 +204,36 @@
                   <q-item-label>kein(e) {{ classes.info(b.class).label }}</q-item-label>
                   <q-item-label caption>
                     {{ b.source_model ?? 'manuell' }}<span v-if="b.source_confidence != null"> · {{ (b.source_confidence * 100).toFixed(0) }} %</span>
+                  </q-item-label>
+                </q-item-section>
+                <q-item-section side>
+                  <q-btn dense flat round size="sm" icon="close" @click.stop="removeBox(b.uid)" />
+                </q-item-section>
+              </q-item>
+            </q-list>
+          </template>
+
+          <template v-if="ignored.length">
+            <div class="text-subtitle2 q-mt-md q-mb-xs">
+              Ignorierte Bereiche ({{ ignored.length }})
+              <HelpIcon term="ignoreRegion" inline />
+            </div>
+            <q-list dense bordered separator class="rounded-borders">
+              <q-item
+                v-for="b in ignored"
+                :key="b.uid"
+                clickable
+                :active="b.uid === store.selectedId"
+                active-class="bg-active"
+                @click="store.selectedId = b.uid"
+              >
+                <q-item-section avatar style="min-width: 24px">
+                  <q-icon name="visibility_off" size="xs" :style="{ color: classes.info(b.class).color }" />
+                </q-item-section>
+                <q-item-section>
+                  <q-item-label>
+                    {{ classes.info(b.class).label }}
+                    <q-icon v-if="b.reflected" name="flip" size="xs" class="q-ml-xs"><q-tooltip>Spiegelung</q-tooltip></q-icon>
                   </q-item-label>
                 </q-item-section>
                 <q-item-section side>
@@ -398,8 +437,9 @@ const ui = useUiStore()
 const classOptions = computed(() =>
   classes.active.map((c) => ({ value: c.name, label: c.label, color: c.color, key: classes.shortcuts[c.name] ?? '' })),
 )
-const positives = computed(() => store.boxes.filter((b) => b.type !== 'hard_negative'))
+const positives = computed(() => store.boxes.filter((b) => b.type === 'positive'))
 const hardNegatives = computed(() => store.boxes.filter((b) => b.type === 'hard_negative'))
+const ignored = computed(() => store.boxes.filter((b) => b.type === 'ignore'))
 const missingClasses = computed(() => {
   const reviewed = new Set(store.image?.reviewed_classes ?? [])
   return classes.active.map((c) => c.name).filter((n) => !reviewed.has(n))
@@ -504,7 +544,10 @@ async function save(next: boolean) {
       message: positives.value.length
         ? `${positives.value.length} Boxen gespeichert`
         : 'Als negatives Trainingsbild gespeichert',
-      caption: hardNegatives.value.length ? `${hardNegatives.value.length} Hard Negatives` : undefined,
+      caption: [
+        hardNegatives.value.length ? `${hardNegatives.value.length} Hard Negatives` : '',
+        ignored.value.length ? `${ignored.value.length} ignorierte Bereiche` : '',
+      ].filter(Boolean).join(' · ') || undefined,
       timeout: 1500,
     })
     await loadNeighbours()
@@ -648,6 +691,10 @@ function onKeydown(e: KeyboardEvent) {
     store.selectedId = null
   } else if (e.key.toLowerCase() === 'n' && store.selectedPrediction) {
     store.markHardNegative(store.selectedPrediction.uid)
+  } else if (e.key.toLowerCase() === 'i' && store.selectedBox) {
+    store.toggleIgnoreForSelected()
+  } else if (e.key.toLowerCase() === 'r' && store.selectedBox) {
+    store.toggleReflectedForSelected()
   } else if (e.key === 'Enter' && store.selectedPrediction) {
     store.acceptPrediction(store.selectedPrediction.uid)
   } else if (e.key === 'A' && e.shiftKey) {

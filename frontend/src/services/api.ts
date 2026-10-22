@@ -17,8 +17,9 @@ export interface DetectionClass {
   updated_at: string
 }
 
-/** positive = real object; hard_negative = region a model wrongly detected as `class` */
-export type AnnotationType = 'positive' | 'hard_negative'
+/** positive = real object; hard_negative = region a model wrongly detected as `class`;
+ *  ignore = region that is neither (not trained, not evaluated) */
+export type AnnotationType = 'positive' | 'hard_negative' | 'ignore'
 
 export interface Annotation {
   id: number
@@ -28,6 +29,8 @@ export interface Annotation {
   x2: number
   y2: number
   type: AnnotationType
+  /** the object is a reflection (window, mirror ...), marked for separate analysis */
+  reflected: boolean
   source: 'manual' | 'prediction'
   source_confidence: number | null
   source_model: string | null
@@ -42,6 +45,7 @@ export interface AnnotationInput {
   x2: number
   y2: number
   type: AnnotationType
+  reflected?: boolean
   source: 'manual' | 'prediction'
   source_confidence?: number | null
   source_model?: string | null
@@ -93,12 +97,16 @@ export interface ReviewCrop {
   x2: number
   y2: number
   type: AnnotationType
+  reflected: boolean
   source: 'manual' | 'prediction'
   image_width: number
   image_height: number
   dataset_split: 'train' | 'validation' | null
   updated_at: string
 }
+
+/** boxes per class for the review; `<type>_reflected` = of these marked as reflection */
+export type ReviewClassCount = { class: ClassName } & Record<AnnotationType | `${AnnotationType}_reflected`, number>
 
 export type ReviewSort = 'newest' | 'oldest' | 'smallest' | 'largest' | 'widest' | 'tallest' | 'image'
 
@@ -631,9 +639,10 @@ export const api = {
   startBenchmark: () => request<Benchmark>('/models/benchmarks', { method: 'POST' }),
   latestBenchmark: () => request<Benchmark | null>('/models/benchmarks/latest'),
   cameraGroups: () => request<{ groups: CameraGroup[]; untested: number }>('/images/camera-groups'),
-  reviewClasses: () => request<{ class: ClassName; positive: number; hard_negative: number }[]>('/annotations/review/classes'),
-  reviewCrops: (p: { class: string; type: AnnotationType; split?: string; sort: ReviewSort; offset: number; limit: number }) => {
+  reviewClasses: () => request<ReviewClassCount[]>('/annotations/review/classes'),
+  reviewCrops: (p: { class: string; type: AnnotationType; reflected?: boolean; split?: string; sort: ReviewSort; offset: number; limit: number }) => {
     const q = new URLSearchParams({ class: p.class, type: p.type, sort: p.sort, offset: String(p.offset), limit: String(p.limit) })
+    if (p.reflected) q.set('reflected', 'true')
     if (p.split) q.set('split', p.split)
     return request<{ total: number; margin: number; items: ReviewCrop[] }>(`/annotations/review?${q}`)
   },

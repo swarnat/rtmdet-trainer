@@ -17,8 +17,11 @@ class AnnotationIn(BaseModel):
     y1: float
     x2: float
     y2: float
-    # hard_negative = region a model wrongly detected as `class` (false positive)
-    type: Literal["positive", "hard_negative"] = "positive"
+    # hard_negative = region a model wrongly detected as `class` (false positive);
+    # ignore = region that is neither positive nor negative: not trained, not evaluated
+    type: Literal["positive", "hard_negative", "ignore"] = "positive"
+    # the object is a reflection (window, mirror ...), marked for separate analysis
+    reflected: bool = False
     source: Literal["manual", "prediction"] = "manual"
     source_confidence: Optional[float] = Field(None, ge=0, le=1, description="hard negatives: confidence of the false detection")
     source_model: Optional[str] = Field(None, max_length=32, description="hard negatives: model version that produced it")
@@ -34,6 +37,7 @@ class AnnotationOut(BaseModel):
     x2: float
     y2: float
     type: str
+    reflected: bool = False
     source: str
     source_confidence: Optional[float] = None
     source_model: Optional[str] = None
@@ -144,8 +148,13 @@ class ImageUpdate(BaseModel):
 
 class ReviewClassCount(BaseModel):
     class_name: str = Field(serialization_alias="class")
-    positive: int
-    hard_negative: int
+    positive: int = 0
+    hard_negative: int = 0
+    ignore: int = 0
+    # of these, marked as reflection
+    positive_reflected: int = 0
+    hard_negative_reflected: int = 0
+    ignore_reflected: int = 0
 
 
 class ReviewCrop(BaseModel):
@@ -157,6 +166,7 @@ class ReviewCrop(BaseModel):
     x2: float
     y2: float
     type: str
+    reflected: bool = False
     source: str
     image_width: int
     image_height: int

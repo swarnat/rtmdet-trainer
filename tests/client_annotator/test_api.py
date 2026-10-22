@@ -101,7 +101,7 @@ def test_save_annotations_and_reopen(configured):
     saved = res.json()
     assert saved["status"] == "annotated" and saved["annotated_at"]
     assert saved["annotations"][0] == {"class": "person", "x1": 10.0, "y1": 10.0, "x2": 60.0, "y2": 90.0, "type": "positive",
-                                       "source": "prediction", "source_confidence": None, "source_model": None}
+                                       "reflected": False, "source": "prediction", "source_confidence": None, "source_model": None}
     assert saved["annotations"][1]["x2"] == 160.0 and saved["annotations"][1]["source_confidence"] == 0.4
     assert configured.get("/api/v1/images?status=annotated").json()["counts"]["annotated"] == 1
     reopened = configured.patch(f"/api/v1/images/{image['id']}", json={"status": "open"}).json()
@@ -169,3 +169,14 @@ def test_empty_check_confidence_uses_pushed_value(configured, monkeypatch, value
     get_settings.cache_clear()
     config = configured.get("/api/v1/config").json()
     assert (config["confidence"], config["confidence_source"]) == (0.3, "pushed")
+
+
+def test_ignore_regions_and_reflections_are_stored(configured):
+    image = upload(configured, jpeg(1))[0]["image"]
+    boxes = [
+        {"class": "person", "x1": 10, "y1": 10, "x2": 60, "y2": 90, "reflected": True},
+        {"class": "person", "x1": 70, "y1": 10, "x2": 120, "y2": 90, "type": "ignore"},
+    ]
+    saved = configured.put(f"/api/v1/images/{image['id']}/annotations", json={"annotations": boxes}).json()
+    assert [(a["type"], a["reflected"]) for a in saved["annotations"]] == [("positive", True), ("ignore", False)]
+    assert configured.get("/api/v1/images").json()["items"][0]["annotations"] == saved["annotations"]

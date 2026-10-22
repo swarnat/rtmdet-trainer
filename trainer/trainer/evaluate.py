@@ -22,7 +22,7 @@ from typing import Callable
 import cv2
 import numpy as np
 
-from odcore.geometry import box_iou, xywh_to_xyxy
+from odcore.geometry import IGNORE_COVERAGE, box_ioa, box_iou, xywh_to_xyxy
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +49,11 @@ def predict_all(detect: Callable[[np.ndarray], list], samples: list[dict]) -> di
     return preds
 
 
+def num_boxes(coco: dict) -> int:
+    """Number of real boxes (ignore regions are exported as ``iscrowd`` boxes and do not count)."""
+    return sum(1 for a in coco["annotations"] if not a.get("iscrowd"))
+
+
 def coco_map(coco_gt: dict, preds: dict[int, list], class_names: tuple[str, ...]) -> dict:
     from pycocotools.coco import COCO
     from pycocotools.cocoeval import COCOeval
@@ -65,7 +70,7 @@ def coco_map(coco_gt: dict, preds: dict[int, list], class_names: tuple[str, ...]
     ]
     empty = {"mAP50-95": 0.0, "mAP50": 0.0}
     out: dict = {"overall": dict(empty), "per_class": {}, "per_size": {}}
-    if not coco_gt["annotations"]:
+    if num_boxes(coco_gt) == 0:
         log.warning("validation set has no boxes; mAP undefined")
         out["overall"] = {"mAP50-95": None, "mAP50": None}
         return out
@@ -103,10 +108,15 @@ def coco_map(coco_gt: dict, preds: dict[int, list], class_names: tuple[str, ...]
 
 
 def precision_recall(coco_gt: dict, preds: dict[int, list], class_names: tuple[str, ...], conf: float, iou_thr: float = 0.5) -> dict:
-    """Greedy matching per image and class at a fixed confidence threshold."""
+    """Greedy matching per image and class at a fixed confidence threshold.
+
+    Ignore regions (``iscrowd``) are neither missed objects nor a reason for false positives:
+    unmatched detections mostly inside one of its class are skipped.
+    """
     gts: dict[tuple[int, int], list] = {}
+    ignore: dict[tuple[int, int], list] = {}
     for a in coco_gt["annotations"]:
-        gts.setdefault((a["image_id"], a["category_id"] - 1), []).append(a)
+        (ignore if a.get("iscrowd") else gts).setdefault((a["image_id"], a["category_id"] - 1), []).append(a)
 
     keys = list(class_names) + list(AREA_RANGES)
     tp = {k: 0 for k in keys}
@@ -124,6 +134,8 @@ def precision_recall(coco_gt: dict, preds: dict[int, list], class_names: tuple[s
             g_used = np.zeros(len(cg), dtype=bool)
             d_boxes = np.array([[d.x1, d.y1, d.x2, d.y2] for d in cd]).reshape(-1, 4)
             ious = box_iou(d_boxes, g_boxes) if len(cd) and len(cg) else np.zeros((len(cd), len(cg)))
+            regions = np.array([xywh_to_xyxy(g["bbox"]) for g in ignore.get((img_id, c), [])]).reshape(-1, 4)
+            covered = box_ioa(d_boxes, regions).max(axis=1) >= IGNORE_COVERAGE if len(cd) and len(regions) else np.zeros(len(cd), bool)
             for i, d in enumerate(cd):
                 best, best_j = iou_thr, -1
                 for j in range(len(cg)):
@@ -135,7 +147,7 @@ def precision_recall(coco_gt: dict, preds: dict[int, list], class_names: tuple[s
                     tp[name] += 1
                     tp[_area_bucket(cg[best_j]["area"])] += 1
                     tot["tp"] += 1
-                else:
+                elif not covered[i]:
                     fp[name] += 1
                     fp[_area_bucket(d_area)] += 1
                     tot["fp"] += 1
@@ -257,7 +269,7 @@ def evaluate_detector(detector, coco_gt: dict, samples: list[dict], model_classe
         "evaluated_with": "openvino",
         "input_size": f"{detector.input_width}x{detector.input_height}",
         "num_images": len(samples),
-        "num_boxes": len(coco_gt["annotations"]),
+        "num_boxes": num_boxes(coco_gt),
         "confidence_for_pr": eval_conf,
         "overall": merge(maps["overall"], prs["overall"]),
         "per_class": per_class,

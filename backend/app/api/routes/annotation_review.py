@@ -36,21 +36,26 @@ SORTS = {
 @router.get("/review/classes", response_model=list[ReviewClassCount], summary="Number of annotated boxes per class")
 def review_classes(session: Session = Depends(get_db)) -> list[ReviewClassCount]:
     rows = session.execute(
-        select(Annotation.class_name, Annotation.type, func.count())
+        select(Annotation.class_name, Annotation.type, Annotation.reflected, func.count())
         .join(Image, Image.id == Annotation.image_id).where(_live)
-        .group_by(Annotation.class_name, Annotation.type)
+        .group_by(Annotation.class_name, Annotation.type, Annotation.reflected)
     ).all()
     counts: dict[str, dict[str, int]] = {}
-    for name, typ, n in rows:
-        counts.setdefault(name, {"positive": 0, "hard_negative": 0})[typ] = n
-    return [ReviewClassCount(class_name=k, positive=v.get("positive", 0), hard_negative=v.get("hard_negative", 0))
+    for name, typ, reflected, n in rows:
+        c = counts.setdefault(name, {})
+        c[typ] = c.get(typ, 0) + n
+        if reflected:
+            c[f"{typ}_reflected"] = c.get(f"{typ}_reflected", 0) + n
+    fields = ReviewClassCount.model_fields
+    return [ReviewClassCount(class_name=k, **{f: v.get(f, 0) for f in fields if f != "class_name"})
             for k, v in sorted(counts.items())]
 
 
 @router.get("/review", response_model=ReviewCropList, summary="Annotated boxes of one class (for crops)")
 def review_list(
     class_name: str = Query(..., alias="class"),
-    type: Literal["positive", "hard_negative"] = "positive",
+    type: Literal["positive", "hard_negative", "ignore"] = "positive",
+    reflected: bool = Query(False, description="only boxes marked as reflection"),
     split: Optional[Literal["train", "validation"]] = None,
     sort: Literal["newest", "oldest", "smallest", "largest", "widest", "tallest", "image"] = "newest",
     offset: int = Query(0, ge=0),
@@ -58,6 +63,8 @@ def review_list(
     session: Session = Depends(get_db),
 ) -> ReviewCropList:
     where = [_live, Annotation.class_name == class_name, Annotation.type == type]
+    if reflected:
+        where.append(Annotation.reflected.is_(True))
     if split:
         where.append(Image.dataset_split == DatasetSplit(split))
     base = select(Annotation, Image.width, Image.height, Image.dataset_split).join(Image, Image.id == Annotation.image_id).where(*where)
@@ -65,7 +72,7 @@ def review_list(
     rows = session.execute(base.order_by(*SORTS[sort]).offset(offset).limit(limit)).all()
     items = [
         ReviewCrop(id=a.id, image_id=a.image_id, class_name=a.class_name, x1=a.x1, y1=a.y1, x2=a.x2, y2=a.y2, type=a.type,
-                   source=a.source, image_width=w, image_height=h, dataset_split=s.value if s else None, updated_at=a.updated_at)
+                   reflected=a.reflected, source=a.source, image_width=w, image_height=h, dataset_split=s.value if s else None, updated_at=a.updated_at)
         for a, w, h, s in rows
     ]
     return ReviewCropList(total=total, margin=CROP_MARGIN, items=items)

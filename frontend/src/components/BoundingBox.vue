@@ -13,7 +13,7 @@
       @mouseleave="hover = false"
     />
     <v-label :config="{ x: box.x1, y: labelY, listening: false, opacity: prediction && !selected ? 0.8 : 1 }">
-      <v-tag :config="{ fill: hardNegative ? '#0f172a' : color, stroke: hardNegative ? color : undefined, strokeWidth: 1, cornerRadius: 2 / scale }" />
+      <v-tag :config="{ fill: hardNegative ? '#0f172a' : ignored ? '#475569' : color, stroke: hardNegative ? color : undefined, strokeWidth: 1, cornerRadius: 2 / scale }" />
       <v-text :config="textConfig" />
     </v-label>
   </v-group>
@@ -44,6 +44,9 @@ const hover = ref(false)
 const color = computed(() => classes.info(props.box.class).color)
 // hard negative = known false positive of the model (never a real object)
 const hardNegative = computed(() => !props.prediction && props.box.type === 'hard_negative')
+// ignore region = neither object nor background (not trained, not evaluated)
+const ignored = computed(() => !props.prediction && props.box.type === 'ignore')
+const reflected = computed(() => !props.prediction && !!props.box.reflected)
 const width = computed(() => props.box.x2 - props.box.x1)
 const height = computed(() => props.box.y2 - props.box.y1)
 
@@ -58,10 +61,20 @@ const rectConfig = computed(() => ({
   // stroke width in screen pixels, independent of zoom
   strokeWidth: props.selected ? 3 : hover.value ? 2.5 : 2,
   strokeScaleEnabled: false,
-  dash: props.prediction ? [8 / props.scale, 5 / props.scale] : hardNegative.value ? [3 / props.scale, 3 / props.scale] : undefined,
+  dash: props.prediction
+    ? [8 / props.scale, 5 / props.scale]
+    : hardNegative.value
+      ? [3 / props.scale, 3 / props.scale]
+      : ignored.value
+        ? [10 / props.scale, 4 / props.scale]
+        : reflected.value
+          ? [12 / props.scale, 3 / props.scale, 2 / props.scale, 3 / props.scale]
+          : undefined,
   fill: props.prediction
     ? 'rgba(255,255,255,0.04)'
-    : hardNegative.value
+    : ignored.value
+      ? props.selected ? 'rgba(148,163,184,0.45)' : 'rgba(148,163,184,0.3)'
+      : hardNegative.value
       ? props.selected ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.35)'
       : props.selected ? `${color.value}33` : `${color.value}14`,
   draggable: !props.prediction,
@@ -75,7 +88,9 @@ const labelText = computed(() => {
   const info = classes.info(props.box.class)
   if (props.prediction && 'confidence' in props.box) return `⚡ ${info.label} ${(props.box.confidence * 100).toFixed(0)}%`
   if (hardNegative.value) return `⊘ HN: kein(e) ${info.label}`
-  return props.box.source === 'prediction' ? `${info.label} ✓` : info.label
+  const suffix = reflected.value ? ' ⇋ Spiegelung' : ''
+  if (ignored.value) return `∅ ignorieren: ${info.label}${suffix}`
+  return (props.box.source === 'prediction' ? `${info.label} ✓` : info.label) + suffix
 })
 const textConfig = computed(() => ({
   text: labelText.value,

@@ -39,6 +39,8 @@ def stage2_epochs(epochs: int) -> int:
 
 def build_config(p: TrainParams):
     cfg = load_base_config(p.base, num_classes=len(p.class_names))
+    # same weights and layers as RTMDetSepBNHead; additionally mutes the background loss in ignore regions
+    cfg.model.bbox_head.type = "IgnoreRTMDetSepBNHead"
     w, h = p.input_width, p.input_height
     pad = dict(img=(114, 114, 114))
     metainfo = dict(classes=tuple(p.class_names))

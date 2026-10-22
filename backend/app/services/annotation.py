@@ -54,6 +54,7 @@ def replace_annotations(session: Session, image: Image, items: list[AnnotationIn
                 class_name=item.class_name,
                 x1=round(x1, 1), y1=round(y1, 1), x2=round(x2, 1), y2=round(y2, 1),
                 type=item.type,
+                reflected=item.reflected,
                 source=item.source,
                 source_confidence=item.source_confidence if hard else None,
                 source_model=item.source_model if hard else None,

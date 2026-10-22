@@ -136,3 +136,21 @@ def test_compare_uses_validation_hard_negatives_only():
 def test_compare_marks_warnings_on_few_boxes():
     cmp = compare(_metrics(4 / 6, 0.1, boxes=6), _metrics(5 / 6, 0.1, boxes=6), "model-0001")
     assert cmp["warnings"] == ["person: recall dropped by 16.7% (only 6 validation boxes)"]
+
+
+def test_hard_negative_crops_keep_ignore_regions_as_crowd_boxes(tmp_path):
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+    train = image(session, 1, DatasetSplit.train, [
+        ("person", "hard_negative", 900, 500, 940, 570),
+        ("person", "ignore", 1000, 520, 1100, 600),      # unclear object next to it: inside the crop
+        ("person", "ignore", 100, 100, 150, 250),        # far away: not in the crop
+    ], tmp_path)
+    classes = ["person", "vehicle"]
+    coco = build_coco([train], classes)
+    assert [a["iscrowd"] for a in coco["annotations"]] == [1, 1]
+    add_hard_negative_crops(session, coco, [train], classes, str(tmp_path))
+    for im in (im for im in coco["images"] if im["file_name"] == "hn_10.jpg"):
+        anns = [a for a in coco["annotations"] if a["image_id"] == im["id"]]
+        assert [a["iscrowd"] for a in anns] == [1]

@@ -13,10 +13,11 @@ from trainer.dataset import build_coco, split_stats
 from trainer.evaluate import precision_recall
 
 
-def image(id_: int, boxes: list[tuple[str, float, float, float, float]]) -> Image:
+def image(id_: int, boxes: list[tuple[str, float, float, float, float]], type: str = "positive", reflected: bool = False) -> Image:
     img = Image(id=id_, s3_object_key=f"images/{id_:064d}.jpg", sha256=f"{id_:064d}", content_type="image/jpeg",
                 size_bytes=1, width=1920, height=1080)
-    img.annotations = [Annotation(class_name=c, x1=x1, y1=y1, x2=x2, y2=y2) for c, x1, y1, x2, y2 in boxes]
+    img.annotations = [Annotation(class_name=c, x1=x1, y1=y1, x2=x2, y2=y2, type=type, reflected=reflected)
+                       for c, x1, y1, x2, y2 in boxes]
     return img
 
 
@@ -135,3 +136,43 @@ def test_base_model_sizes(base_id, widen, deepen):
     assert cfg.model.backbone.init_cfg is None
     assert cfg.model.backbone.norm_cfg["type"] == "BN" and cfg.model.bbox_head.norm_cfg["type"] == "BN"
     assert base.checkpoint_key.startswith("base/rtmdet_") and base.checkpoint_url.endswith(f"{base.sha256_prefix}.pth")
+
+
+def test_ignore_regions_become_crowd_boxes_and_reflections_are_marked():
+    img = image(1, [("person", 10, 20, 110, 220)])
+    img.annotations += image(1, [("person", 300, 300, 400, 500)], type="ignore").annotations
+    img.annotations += image(1, [("person", 600, 100, 700, 300)], reflected=True).annotations
+    only_ignore = image(2, [("person", 50, 50, 150, 250)], type="ignore")  # nothing but an ignore region
+    coco = build_coco([img, only_ignore], ["person", "vehicle"])
+    assert [(a["image_id"], a["iscrowd"], a.get("reflected", False)) for a in coco["annotations"]] == [
+        (1, 0, False), (1, 1, False), (1, 0, True), (2, 1, False)]
+    stats = split_stats(coco)
+    # an ignore region is not a box and does not make an image positive
+    assert stats["boxes"] == 2 and stats["negative_images"] == 1 and stats["boxes_per_class"] == {"person": 2, "vehicle": 0}
+    assert stats["ignore_regions"] == 2 and stats["reflected_boxes"] == 1
+
+
+def test_precision_recall_does_not_count_ignore_regions():
+    img = image(1, [("person", 0, 0, 100, 100)])
+    img.annotations += image(1, [("person", 200, 200, 400, 400)], type="ignore").annotations
+    coco = build_coco([img], ["person", "vehicle"])
+    preds = {1: [
+        Detection(0, 0.9, 0, 0, 100, 100),      # TP
+        Detection(0, 0.8, 220, 220, 300, 300),  # inside the ignore region: no FP
+        Detection(0, 0.7, 380, 380, 520, 520),  # mostly outside it: FP
+        Detection(1, 0.6, 220, 220, 300, 300),  # the region is for persons only: FP
+    ]}
+    res = precision_recall(coco, preds, ("person", "vehicle"), conf=0.25)
+    assert res["overall"] == {"precision": 1 / 3, "recall": 1.0, "tp": 1, "fp": 2, "fn": 0}  # the region is no missed object
+
+
+def test_coco_map_ignores_detections_in_ignore_regions():
+    pytest.importorskip("pycocotools")
+    from trainer.evaluate import coco_map, num_boxes
+
+    img = image(1, [("person", 0, 0, 100, 100)])
+    img.annotations += image(1, [("person", 200, 200, 400, 400)], type="ignore").annotations
+    coco = build_coco([img], ["person"])
+    assert num_boxes(coco) == 1
+    hit, in_region = Detection(0, 0.9, 0, 0, 100, 100), Detection(0, 0.95, 220, 220, 300, 300)
+    assert coco_map(coco, {1: [hit, in_region]}, ("person",))["overall"]["mAP50"] == pytest.approx(1.0)

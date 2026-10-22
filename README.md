@@ -79,6 +79,8 @@ Die Klassen samt COCO-Mapping werden unter **Klassen** gepflegt (Tabelle `detect
 | `Enter` / Doppelklick | ausgewählte Prediction übernehmen |
 | `N` | ausgewählte Prediction als False Positive / Hard Negative markieren |
 | `Umschalt+A` | alle Predictions übernehmen |
+| `I` | ausgewählte Box als **ignorierten Bereich** markieren bzw. wieder zum Objekt machen |
+| `R` | ausgewählte Box als **Spiegelung** markieren / Markierung entfernen |
 | `Bild↑` / `Bild↓` | vorheriges / nächstes Bild |
 
 **Hard Negatives:** Erkennt ein Modell etwas fälschlich (z. B. ein Hinweisschild als Person), markiert „Als False Positive / Hard Negative markieren“ (Taste `N` oder ⊘ in der Prediction-Liste) die Region als bekannten Fehlalarm dieser Klasse. Im Canvas erscheinen Hard Negatives abgedunkelt, kurz gestrichelt und mit „⊘ HN“-Label; in der Seitenleiste haben sie eine eigene Liste. Ein Bild nur mit Hard Negatives zählt als negatives Bild. Details unter [Hard Negatives](#hard-negatives).
@@ -167,7 +169,7 @@ Weitere Endpunkte (Auszug):
 |----------------|-------|
 | `POST /api/v1/images` | Trainingsbilder hochladen (multipart, mehrere `files`) |
 | `GET /api/v1/images?status=unlabeled&negative=false` | Bilder auflisten |
-| `GET/PUT /api/v1/images/{id}/annotations` | Annotationen lesen / komplett ersetzen (`[]` = negatives Bild); `type`: `positive` oder `hard_negative` (+ `source_confidence`, `source_model`) |
+| `GET/PUT /api/v1/images/{id}/annotations` | Annotationen lesen / komplett ersetzen (`[]` = negatives Bild); `type`: `positive`, `hard_negative` oder `ignore` (+ `source_confidence`, `source_model`), `reflected`: `true` für Spiegelungen |
 | `POST /api/v1/detect/url` | Bild von einer HTTP(S)-URL laden (durch die API, also auch nur serverseitig erreichbare Kamera-URLs) und testen; JSON `{"url", "model", "input_size", "confidence"}`, Antwort wie `/detect` plus `image_data_url`; nichts wird gespeichert (Schnelltest im Dashboard: Datei oder URL) |
 | `POST /api/v1/images/{id}/detect` | Modelltest auf gespeichertem Bild |
 | `POST /api/v1/batch-tests`, `GET /api/v1/batch-tests[/{id}]`, `POST …/{id}/cancel` | Batch-Test starten, Fortschritt, Abbruch |
@@ -228,6 +230,18 @@ Hard Negatives werden **nicht** als zusätzliche Klasse (etwa `not_person`) trai
 Alle Metrik-Ansichten (nach dem Training, Modelldetail, Dashboard, Übersichtstabellen der Modelle und Trainings) stellen Personen in den Vordergrund: oben gesondert die **nicht erkannten Personen** („x von Boxen“, beim Training zusätzlich neben dem Production-Modell mit Differenz), danach Nicht erkannt, mAP50-95 und mAP50 je Klasse (Person zuerst), Recall, Precision und Fehlalarme. Boxgrößen-Tabelle, „mAP50-95 klein“ und TP/FP/FN nur im Modus „Erweitert“.
 
 Einstellungen (unter **Einstellungen**): `hard_negative_context_factor`, `hard_negative_min_crop_fraction`, `hard_negative_oversample` (0 = keine Crops, nur Regressionstest). Bei sehr vielen Hard Negatives im Verhältnis zu den Originalbildern das Oversampling reduzieren und auf den Recall im Vergleich achten.
+
+### Ignorierte Bereiche und Spiegelungen
+
+**Ignorierter Bereich** (`type: "ignore"`, Taste `I`): eine Box, die weder Objekt noch Hintergrund ist – etwa ein verdecktes, abgeschnittenes oder nicht eindeutiges Objekt. Der Bereich gilt nur für seine Klasse; ein Bild nur mit ignorierten Bereichen zählt als negatives Bild. Im Canvas ist er grau schraffiert mit „∅ ignorieren“-Label. Er wirkt an drei Stellen:
+
+1. **Training:** Der Snapshot exportiert ihn als COCO-Box mit `iscrowd: 1` (auch in den Hard-Negative-Ausschnitten, dort in Ausschnittkoordinaten). MMDetection reicht solche Boxen als `ignored_instances` an den Head weiter, RTMDet wertet sie aber nicht aus (der Assigner nimmt `gt_instances_ignore` an und benutzt es nicht). Deshalb trainiert der Trainer mit `IgnoreRTMDetSepBNHead` (`trainer/rtmdet/ignore_head.py`, gleiche Gewichte wie `RTMDetSepBNHead`): Hintergrundzellen, deren Mittelpunkt im Bereich liegt, bekommen das Klassifikations-Gewicht 0. Zellen, die einer echten Box zugewiesen sind, bleiben positiv – ein Objekt, das den Bereich überlappt, wird weiter gelernt.
+2. **Evaluierung:** Eine Erkennung der Klasse, die zu ≥ 50 % im Bereich liegt und keiner Box zugeordnet wurde, zählt weder als Treffer noch als Fehlalarm (pycocotools für mAP, `precision_recall` für TP/FP/FN); der Bereich selbst ist kein übersehenes Objekt.
+3. **Fehleranalyse (Batch-Test):** Dieselbe Regel – solche Erkennungen werden nicht als Fehlalarme markiert.
+
+**Spiegelung** (`reflected: true`, Taste `R`): Markierung für Objekte, die nur eine Spiegelung sind (Fenster, Spiegel, Pfütze …). Sie ändert das Training nicht, die Box wird normal trainiert. Im Snapshot steht `"reflected": true` an der COCO-Annotation, `reflected_boxes` und `ignore_regions` in den Datensatz-Statistiken, damit sich diese Boxen später getrennt betrachten lassen. Kombinierbar mit „ignorieren“.
+
+Beides gilt auch im Client-Annotationsdienst und wird beim Einlesen übernommen (Migration `0012`).
 
 ### Bildauflösung & Letterboxing
 
@@ -290,7 +304,7 @@ Ausgewertet wird das **exportierte OpenVINO-Modell** auf dem Validierungssplit, 
 |---------|-------------------|
 | `images` | `s3_object_key`, `sha256` (unique), `width`, `height`, `annotation_status` (`unlabeled`/`labeled`), `dataset_split`, `reviewed_classes`, `snapshot_refs` (Link-Zähler), `deleted_at` (ausgeblendet, Datei noch verlinkt), `created_at`, `updated_at` |
 | `snapshot_images` | `training_run_id`, `image_id` – welche Bilder ein Trainings-Snapshot verwendet |
-| `annotations` | `image_id`, `class_name`, `x1`, `y1`, `x2`, `y2` (Originalpixel), `type` (`positive`/`hard_negative`), `source` (`manual`/`prediction`), `source_confidence`, `source_model` |
+| `annotations` | `image_id`, `class_name`, `x1`, `y1`, `x2`, `y2` (Originalpixel), `type` (`positive`/`hard_negative`/`ignore`), `reflected`, `source` (`manual`/`prediction`), `source_confidence`, `source_model` |
 | `detection_classes` | `name` (unique, fest), `label`, `color`, `coco_classes`, `sort_order`, `active` |
 | `training_runs` | `status`, `base_model_id`, `class_names`, `dataset_snapshot`, `input_width/height`, `epochs`, `batch_size`, `learning_rate`, `started_at`, `finished_at`, `progress_json`, `metrics_json`, `log`, `error` |
 | `model_versions` | `version`, `status`, `kind`, `checkpoint_key`, `onnx_key`, `openvino_key`, `config_key`, `input_width/height`, `class_names`, `metrics_json`, `dataset_snapshot`, `training_run_id`, `created_at`, `activated_at` |

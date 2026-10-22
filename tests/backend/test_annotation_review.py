@@ -42,7 +42,7 @@ def client(session_factory):
         s.flush()
         s.add_all([
             Annotation(image_id=live.id, class_name="person", x1=100, y1=100, x2=140, y2=200),  # 40x100
-            Annotation(image_id=live.id, class_name="person", x1=300, y1=300, x2=500, y2=350),  # 200x50, lying
+            Annotation(image_id=live.id, class_name="person", x1=300, y1=300, x2=500, y2=350, reflected=True),  # 200x50, lying
             Annotation(image_id=live.id, class_name="person", x1=600, y1=300, x2=650, y2=350, type="hard_negative"),
             Annotation(image_id=live.id, class_name="vehicle", x1=0, y1=0, x2=300, y2=200),
             Annotation(image_id=gone.id, class_name="person", x1=0, y1=0, x2=10, y2=10),
@@ -65,7 +65,18 @@ def client(session_factory):
 
 def test_class_counts_skip_deleted_images(client):
     res = client.get("/api/v1/annotations/review/classes").json()
-    assert res == [{"class": "person", "positive": 2, "hard_negative": 1}, {"class": "vehicle", "positive": 1, "hard_negative": 0}]
+    zero = {"positive": 0, "hard_negative": 0, "ignore": 0, "positive_reflected": 0, "hard_negative_reflected": 0, "ignore_reflected": 0}
+    assert res == [
+        {"class": "person", **zero, "positive": 2, "hard_negative": 1, "positive_reflected": 1},
+        {"class": "vehicle", **zero, "positive": 1},
+    ]
+
+
+def test_reflected_filter(client):
+    res = client.get("/api/v1/annotations/review", params={"class": "person", "reflected": True}).json()
+    assert res["total"] == 1 and res["items"][0]["reflected"] is True and res["items"][0]["x2"] - res["items"][0]["x1"] == 200
+    assert client.get("/api/v1/annotations/review", params={"class": "person", "reflected": True, "type": "hard_negative"}).json()["total"] == 0
+    assert client.get("/api/v1/annotations/review", params={"class": "person"}).json()["total"] == 2
 
 
 def test_list_filters_and_sorts(client):

@@ -73,7 +73,8 @@ class AnnotationIn(BaseModel):
     y1: float
     x2: float
     y2: float
-    type: Literal["positive", "hard_negative"] = "positive"
+    type: Literal["positive", "hard_negative", "ignore"] = "positive"
+    reflected: bool = False
     source: Literal["manual", "prediction"] = "manual"
     source_confidence: Optional[float] = Field(None, ge=0, le=1)
     source_model: Optional[str] = Field(None, max_length=32)
@@ -349,7 +350,7 @@ def save_annotations(image_id: int, body: AnnotationsSave, store: Store = Depend
         hard = item.type == "hard_negative"
         boxes.append({
             "class": item.class_name, "x1": round(x1, 1), "y1": round(y1, 1), "x2": round(x2, 1), "y2": round(y2, 1),
-            "type": item.type, "source": item.source,
+            "type": item.type, "reflected": item.reflected, "source": item.source,
             "source_confidence": item.source_confidence if hard else None, "source_model": item.source_model if hard else None,
         })
     return ImageOut(**store.save_annotations(image_id, boxes, body.mark_annotated))

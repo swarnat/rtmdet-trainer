@@ -136,6 +136,24 @@ def box_iou(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return np.where(union > 0, inter / np.maximum(union, 1e-12), 0.0)
 
 
+# a detection covered at least this much by an ignore region is neither a true nor a false positive
+IGNORE_COVERAGE = 0.5
+
+
+def box_ioa(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Pairwise intersection over the area of ``a`` (share of ``a`` covered by ``b``): ``Nx4`` vs ``Mx4`` xyxy boxes.
+
+    The overlap COCO uses for ``iscrowd`` regions (detections inside an ignore region are not counted).
+    """
+    a = np.asarray(a, dtype=np.float64).reshape(-1, 4)
+    b = np.asarray(b, dtype=np.float64).reshape(-1, 4)
+    area_a = (a[:, 2] - a[:, 0]).clip(0) * (a[:, 3] - a[:, 1]).clip(0)
+    lt = np.maximum(a[:, None, :2], b[None, :, :2])
+    rb = np.minimum(a[:, None, 2:], b[None, :, 2:])
+    inter = (rb - lt).clip(0).prod(axis=2)
+    return np.where(area_a[:, None] > 0, inter / np.maximum(area_a[:, None], 1e-12), 0.0)
+
+
 def nms(boxes: np.ndarray, scores: np.ndarray, iou_threshold: float) -> np.ndarray:
     """Greedy NMS, returns kept indices sorted by descending score."""
     order = np.argsort(-scores, kind="stable")

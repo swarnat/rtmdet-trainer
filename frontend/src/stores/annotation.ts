@@ -12,6 +12,8 @@ export interface EditBox {
   x2: number
   y2: number
   type: AnnotationType
+  /** reflection (window, mirror ...): only marked, trained like any other box */
+  reflected?: boolean
   source: 'manual' | 'prediction'
   source_confidence?: number | null
   source_model?: string | null
@@ -62,6 +64,7 @@ export const useAnnotationStore = defineStore('annotation', () => {
       x2: a.x2,
       y2: a.y2,
       type: a.type,
+      reflected: a.reflected ?? false,
       source: a.source,
       source_confidence: a.source_confidence,
       source_model: a.source_model,
@@ -152,6 +155,17 @@ export const useAnnotationStore = defineStore('annotation', () => {
     boxes.value = boxes.value.filter((b) => b.uid !== selectedId.value)
     selectedId.value = null
     dirty.value = true
+  }
+
+  /** Object <-> ignore region (neither object nor background: not trained, not evaluated). */
+  function toggleIgnoreForSelected() {
+    const b = selectedBox.value
+    if (b) updateBox(b.uid, { type: b.type === 'ignore' ? 'positive' : 'ignore' })
+  }
+
+  function toggleReflectedForSelected() {
+    const b = selectedBox.value
+    if (b) updateBox(b.uid, { reflected: !b.reflected })
   }
 
   function setClassForSelected(cls: ClassName) {
@@ -245,6 +259,7 @@ export const useAnnotationStore = defineStore('annotation', () => {
           x2: Math.round(b.x2 * 10) / 10,
           y2: Math.round(b.y2 * 10) / 10,
           type: b.type,
+          reflected: b.reflected ?? false,
           source: b.source,
           source_confidence: b.source_confidence ?? null,
           source_model: b.source_model ?? null,
@@ -269,7 +284,7 @@ export const useAnnotationStore = defineStore('annotation', () => {
   return {
     image, boxes, predictions, lastDetection, fromSuggestion, fromErrorMark, selectedId, activeClass, dirty, saving, history,
     selectedBox, selectedPrediction,
-    load, addBox, updateBox, deleteSelected, setClassForSelected, undo,
+    load, addBox, updateBox, deleteSelected, toggleIgnoreForSelected, toggleReflectedForSelected, setClassForSelected, undo,
     setDetection, acceptable, acceptPrediction, markHardNegative, acceptAllPredictions, clearPredictions, save,
   }
 })

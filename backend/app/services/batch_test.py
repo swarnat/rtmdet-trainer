@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from odcore.classes import active_class_names
 from odcore.db import AnnotationStatus, BatchStatus, DatasetSplit, Image, ImageErrorMark, ImageSuggestion, PredictionBatch, utcnow
-from odcore.geometry import box_iou, decode_image
+from odcore.geometry import IGNORE_COVERAGE, box_ioa, box_iou, decode_image
 from odcore.settings_store import get_setting
 from odcore.storage import ObjectStorage
 
@@ -43,11 +43,22 @@ SCOPES = SUGGESTION_SCOPES + ERROR_SCOPES
 MATCH_IOU = 0.5
 
 
-def find_errors(detections: list[dict], annotations: list[dict], iou_thr: float = MATCH_IOU) -> tuple[int, list[dict], list[dict]]:
+def _in_ignore_region(det: dict, cls: str, ignore: list[dict] | None) -> bool:
+    regions = [r for r in ignore or () if r["class"] == cls]
+    if not regions:
+        return False
+    keys = ("x1", "y1", "x2", "y2")
+    box = [[det["bbox"][k] for k in keys]]
+    return bool(box_ioa(box, [[r["bbox"][k] for k in keys] for r in regions]).max() >= IGNORE_COVERAGE)
+
+
+def find_errors(detections: list[dict], annotations: list[dict], iou_thr: float = MATCH_IOU,
+                ignore: list[dict] | None = None) -> tuple[int, list[dict], list[dict]]:
     """Greedy one-to-one matching per class, highest confidence first (as the trainer's precision/recall).
 
     Returns ``(true positives, false positives, false negatives)``; false positives are the
-    unmatched detections, false negatives the unmatched annotations.
+    unmatched detections, false negatives the unmatched annotations. Unmatched detections that lie
+    in an ``ignore`` region of their class (same box format as ``annotations``) are no errors.
     """
     tp, fps, fns = 0, [], []
     for cls in sorted({d["class"] for d in detections} | {a["class"] for a in annotations}):
@@ -64,7 +75,7 @@ def find_errors(detections: list[dict], annotations: list[dict], iou_thr: float 
             if best_j >= 0:
                 used[best_j] = True
                 tp += 1
-            else:
+            elif not _in_ignore_region(d, cls, ignore):
                 fps.append(d)
         fns += [g for g, u in zip(gts, used) if not u]
     return tp, fps, fns
@@ -199,7 +210,11 @@ def _store_error_mark(session: Session, image: Image, dets: list[dict], model_cl
         {"class": a.class_name, "bbox": {"x1": a.x1, "y1": a.y1, "x2": a.x2, "y2": a.y2}}
         for a in image.annotations if a.type == "positive" and a.class_name in classes
     ]
-    tp, fps, fns = find_errors([d for d in dets if d["class"] in classes], gts)
+    ignore = [
+        {"class": a.class_name, "bbox": {"x1": a.x1, "y1": a.y1, "x2": a.x2, "y2": a.y2}}
+        for a in image.annotations if a.type == "ignore" and a.class_name in classes
+    ]
+    tp, fps, fns = find_errors([d for d in dets if d["class"] in classes], gts, ignore=ignore)
     session.execute(delete(ImageErrorMark).where(ImageErrorMark.image_id == image.id))
     if fps or fns:
         session.add(ImageErrorMark(

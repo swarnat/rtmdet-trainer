@@ -24,7 +24,7 @@ from odcore.settings_store import get_setting
 from .config import get_settings
 from .dataset import current_validation_set, load_hard_negatives, load_val_samples
 from .db import session_factory, storage
-from .evaluate import evaluate_detector
+from .evaluate import evaluate_detector, num_boxes
 
 log = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ def run_benchmark(benchmark_id: int) -> None:
         coco_val, samples = load_val_samples(val_dir)
         hard_negatives = load_hard_negatives(val_dir)
         _update(benchmark_id, status=BatchStatus.running, started_at=utcnow(), class_names=class_names,
-                num_images=len(samples), num_boxes=len(coco_val["annotations"]),
+                num_images=len(samples), num_boxes=num_boxes(coco_val),
                 num_hard_negatives=len(hard_negatives), total=len(models), processed=0, results_json={})
         log.info("benchmark #%d: %d models on %d validation images", benchmark_id, len(models), len(samples))
 

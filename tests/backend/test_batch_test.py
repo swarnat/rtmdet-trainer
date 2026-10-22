@@ -253,3 +253,21 @@ def test_scope_untested_open_images(env):
         assert {r.image_id: r.batch_id for r in s.query(ImageSuggestion)} == {1: None, 2: batch["id"]}
     # all open images tested now: nothing left in scope
     assert client.post("/api/v1/batch-tests", json={"scope": "unlabeled_untested"}).status_code == 409
+
+
+def test_find_errors_skips_detections_in_ignore_regions():
+    from app.services.batch_test import find_errors
+
+    box = lambda x1, y1, x2, y2: {"x1": x1, "y1": y1, "x2": x2, "y2": y2}  # noqa: E731
+    dets = [
+        {"class": "person", "confidence": 0.9, "bbox": box(0, 0, 100, 100)},      # TP
+        {"class": "person", "confidence": 0.8, "bbox": box(220, 220, 280, 290)},  # inside the region: no error
+        {"class": "person", "confidence": 0.7, "bbox": box(400, 400, 500, 500)},  # elsewhere: FP
+        {"class": "vehicle", "confidence": 0.6, "bbox": box(220, 220, 280, 290)}, # region is for persons: FP
+    ]
+    gts = [{"class": "person", "bbox": box(0, 0, 100, 100)}]
+    ignore = [{"class": "person", "bbox": box(200, 200, 300, 300)}]
+    tp, fps, fns = find_errors(dets, gts, ignore=ignore)
+    assert tp == 1 and fns == []
+    assert [(d["class"], d["confidence"]) for d in fps] == [("person", 0.7), ("vehicle", 0.6)]
+    assert len(find_errors(dets, gts)[1]) == 3  # without regions the detection in it is a false positive

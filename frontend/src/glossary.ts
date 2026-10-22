@@ -24,6 +24,13 @@ export const GLOSSARY = {
   hardNegatives:
     'Hard Negatives (HN): Bekannte Fehlalarme – Stellen, an denen ein Modell fälschlich etwas erkannt hat (z. B. ein Schild als Person). ' +
     'Sie werden gespeichert, damit neue Modelle diesen Fehler nicht wiederholen, und nach jedem Training überprüft.',
+  ignoreRegion:
+    'Ignorierter Bereich: Eine Stelle, die weder Objekt noch Hintergrund ist (z. B. ein verdecktes, abgeschnittenes oder nicht eindeutiges Objekt). ' +
+    'Das Training bestraft dort keine Erkennung, und in der Auswertung zählt eine Erkennung dort weder als Treffer noch als Fehlalarm. ' +
+    'Der Bereich gilt nur für seine Klasse.',
+  reflected:
+    'Spiegelung: Das Objekt ist nur eine Spiegelung (Fenster, Spiegel, Pfütze …). Die Markierung ändert das Training nicht, ' +
+    'sie dient dazu, diese Boxen später getrennt zu betrachten.',
   hnStillDetected:
     'Weiterhin falsch erkannt: Wie viele der bekannten Fehlalarme das neue Modell trotzdem noch macht. Weniger ist besser.',
   hnFpRate:

@@ -14,7 +14,7 @@
         <div class="row items-center no-wrap q-gutter-x-xs">
           <span class="swatch" :style="{ background: classes.info(c.class).color }" />
           <span>{{ classes.info(c.class).label }}</span>
-          <q-badge rounded color="grey-7" :label="type === 'positive' ? c.positive : c.hard_negative" />
+          <q-badge rounded color="grey-7" :label="badgeCount(c)" />
         </div>
       </q-tab>
     </q-tabs>
@@ -29,8 +29,10 @@
         :options="[
           { label: 'Objekte', value: 'positive' },
           { label: 'Hard Negatives', value: 'hard_negative' },
+          { label: 'Ignoriert', value: 'ignore' },
         ]"
       />
+      <q-toggle v-model="reflectedOnly" dense label="Nur Spiegelungen" />
       <q-select v-model="split" :options="splitOptions" emit-value map-options dense outlined label="Split" style="min-width: 140px" />
       <q-select v-model="sort" :options="sortOptions" emit-value map-options dense outlined label="Sortierung" style="min-width: 220px" />
       <div class="row items-center no-wrap" style="width: 200px">
@@ -74,16 +76,21 @@
 import { onMounted, ref, watch } from 'vue'
 import { useQuasar } from 'quasar'
 import HelpIcon from '@/components/HelpIcon.vue'
-import { api, errorMessage, fmtDate, type AnnotationType, type ReviewCrop, type ReviewSort } from '@/services/api'
+import { api, errorMessage, fmtDate, type AnnotationType, type ReviewClassCount, type ReviewCrop, type ReviewSort } from '@/services/api'
 import { useClassesStore } from '@/stores/classes'
 
 const PAGE = 300
 const $q = useQuasar()
 const classes = useClassesStore()
 
-const counts = ref<{ class: string; positive: number; hard_negative: number }[]>([])
+const counts = ref<ReviewClassCount[]>([])
 const cls = ref('')
 const type = ref<AnnotationType>('positive')
+const reflectedOnly = ref(false)
+
+function badgeCount(c: ReviewClassCount) {
+  return reflectedOnly.value ? c[`${type.value}_reflected`] : c[type.value]
+}
 const split = ref<'' | 'train' | 'validation'>('')
 const sort = ref<ReviewSort>('newest')
 const tileHeight = ref(stored('review-tile-height', 120))
@@ -169,7 +176,7 @@ async function load(append = false) {
   loading.value = true
   try {
     const res = await api.reviewCrops({
-      class: cls.value, type: type.value, split: split.value || undefined, sort: sort.value,
+      class: cls.value, type: type.value, reflected: reflectedOnly.value, split: split.value || undefined, sort: sort.value,
       offset: append ? items.value.length : 0, limit: PAGE,
     })
     if (id !== request) return // a newer selection is loading
@@ -193,7 +200,7 @@ async function reload() {
   await load()
 }
 
-watch([cls, type, split, sort], () => load())
+watch([cls, type, reflectedOnly, split, sort], () => load())
 onMounted(() => {
   classes.refresh()
   reload()

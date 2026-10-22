@@ -137,11 +137,11 @@ export function toDetail(img: ClientImage): ImageDetail {
   return {
     id: img.id, sha256: img.sha256, original_filename: img.filename, content_type: img.content_type, size_bytes: img.size_bytes,
     width: img.width, height: img.height, annotation_status: img.status === 'annotated' ? 'labeled' : 'unlabeled',
-    dataset_split: null, annotation_count: positives, hard_negative_count: img.annotations.length - positives,
+    dataset_split: null, annotation_count: positives, hard_negative_count: img.annotations.filter((a) => a.type === 'hard_negative').length,
     suggestion_count: img.detection ? img.detection.detections.length : null, error_fp: null, error_fn: null,
     duplicate_of: null, duplicate_score: null, duplicate_keep: false, reviewed_classes: null, needs_review: false,
     snapshot_refs: 0, created_at: img.created_at, updated_at: img.updated_at, labeled_at: img.annotated_at,
-    annotations: img.annotations.map((a, i) => ({ ...a, id: i + 1, created_at: img.updated_at, updated_at: img.updated_at })),
+    annotations: img.annotations.map((a, i) => ({ ...a, reflected: a.reflected ?? false, id: i + 1, created_at: img.updated_at, updated_at: img.updated_at })),
     suggestion: img.detection
       ? { batch_id: null, model_version: img.detection.model_version, input_width: img.detection.input_width,
           input_height: img.detection.input_height, confidence: img.detection.confidence,

@@ -37,7 +37,7 @@ bzw. Cookie übertragen; hinter HTTPS wird das Cookie als `Secure` gesetzt, wenn
 2. **Prüfen:** *Prüfen* (Taste T) schickt das Bild an den Inference-Server, *Offene prüfen* alle offenen, noch nicht
    geprüften Bilder. Die Treffer erscheinen gestrichelt als Vorschläge.
 3. **Annotieren:** Box ziehen, Klasse 1–9, Vorschlag übernehmen (Enter/Doppelklick, Shift+A = alle), Fehlalarm (N),
-   Entf, Strg+Z, *Speichern* (Strg+S) markiert das Bild als annotiert – ohne Boxen als Bild ohne Objekte.
+   Bereich ignorieren (I), Spiegelung markieren (R), Entf, Strg+Z, *Speichern* (Strg+S) markiert das Bild als annotiert – ohne Boxen als Bild ohne Objekte.
 4. **Abholen:** im Trainingssystem *Client* → *Einlesen*. Annotierte Bilder werden dort als annotiert übernommen,
    offene mit ihrer Prüfung als Vorschläge; danach werden sie hier gelöscht.
 

@@ -110,3 +110,22 @@ def test_split_chosen_before_labeling_is_kept(session_factory):
         s.commit()
         replace_annotations(s, img, [], mark_labeled=True)
         assert img.dataset_split == DatasetSplit.validation
+
+
+def test_ignore_region_and_reflection_are_saved(session_factory):
+    with session_factory() as s:
+        img = make_image(s, sha="c" * 64)
+        items = [
+            AnnotationIn.model_validate({"class": "person", "x1": 10, "y1": 10, "x2": 90, "y2": 200, "reflected": True}),
+            AnnotationIn.model_validate({"class": "person", "x1": 300, "y1": 10, "x2": 400, "y2": 200, "type": "ignore",
+                                         "source_confidence": 0.7}),
+            AnnotationIn.model_validate({"class": "person", "x1": 500, "y1": 10, "x2": 600, "y2": 200}),
+        ]
+        img = replace_annotations(s, img, items, mark_labeled=True)
+        assert [(a.type, a.reflected) for a in img.annotations] == [("positive", True), ("ignore", False), ("positive", False)]
+        assert img.annotations[1].source_confidence is None  # only hard negatives keep the false detection's confidence
+
+
+def test_unknown_annotation_type_is_rejected():
+    with pytest.raises(ValueError):
+        AnnotationIn.model_validate({"class": "person", "x1": 0, "y1": 0, "x2": 50, "y2": 50, "type": "maybe"})
