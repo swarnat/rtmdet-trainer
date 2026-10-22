@@ -132,6 +132,11 @@ services:
       TRAINING_QUEUE: training
       TRAINER_WORK_DIR: /tmp/od-work
       BOOTSTRAP_ON_START: ${BOOTSTRAP_ON_START:-true}
+      # OWLv2 weights of the candidate search (Hugging Face), downloaded on first use and kept in the volume
+      HF_HOME: /var/cache/huggingface
+      CANDIDATE_MODEL: ${CANDIDATE_MODEL:-google/owlv2-base-patch16-ensemble}
+    volumes:
+      - hf-cache:/var/cache/huggingface
     # dataloader workers need shared memory
     shm_size: ${TRAINER_SHM_SIZE:-8gb}
     depends_on:
@@ -189,3 +194,4 @@ volumes:
   garage-data:
   garage-config:
   model-cache:
+  hf-cache:

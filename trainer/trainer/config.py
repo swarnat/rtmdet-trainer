@@ -16,6 +16,8 @@ class TrainerSettings:
     redis_url: str = field(default_factory=lambda: os.environ.get("REDIS_URL", "redis://redis:6379/0"))
     queue: str = field(default_factory=lambda: os.environ.get("TRAINING_QUEUE", "training"))
     work_dir: str = field(default_factory=lambda: os.environ.get("TRAINER_WORK_DIR", "/tmp/od-work"))
+    # open-vocabulary detector of the candidate search (Hugging Face model id; downloaded on first use)
+    candidate_model: str = field(default_factory=lambda: os.environ.get("CANDIDATE_MODEL", "google/owlv2-base-patch16-ensemble"))
     bootstrap_on_start: bool = field(default_factory=lambda: _bool("BOOTSTRAP_ON_START", True))
     s3: S3Settings = field(default_factory=S3Settings.from_env)
 

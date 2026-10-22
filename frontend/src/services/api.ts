@@ -108,6 +108,49 @@ export interface ReviewCrop {
 /** boxes per class for the review; `<type>_reflected` = of these marked as reflection */
 export type ReviewClassCount = { class: ClassName } & Record<AnnotationType | `${AnnotationType}_reflected`, number>
 
+/** Search for objects of a class with an open-vocabulary detector (candidate search) */
+export interface CandidateSearch {
+  id: number
+  class: ClassName
+  /** text: found by text queries; examples: found by looking like example boxes */
+  mode: 'text' | 'examples'
+  prompts: string[]
+  /** number of example boxes (mode examples) */
+  examples: number
+  scope: 'all' | 'labeled' | 'unlabeled'
+  max_images: number
+  min_score: number
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+  total: number
+  processed: number
+  found: number
+  pending: number
+  accepted: number
+  rejected: number
+  model: string | null
+  error: string | null
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+}
+
+export interface Candidate {
+  id: number
+  image_id: number
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  score: number
+  prompt: string
+  status: 'pending' | 'accepted' | 'rejected'
+  image_width: number
+  image_height: number
+  /** what accepting does: add a box / give the existing box of `current_class` the searched class / nothing (already there) */
+  action: 'new' | 'reclassify' | 'exists'
+  current_class: ClassName | null
+}
+
 export type ReviewSort = 'newest' | 'oldest' | 'smallest' | 'largest' | 'widest' | 'tallest' | 'image'
 
 /** Open images without suggestions of one camera view, for the quick review */
@@ -648,6 +691,28 @@ export const api = {
   },
   /** updated_at in the URL: an edited box gets a new URL (the crop is cached by the browser) */
   cropUrl: (c: ReviewCrop) => `${BASE}/annotations/${c.id}/crop?v=${encodeURIComponent(c.updated_at)}`,
+  candidateSearches: () => request<CandidateSearch[]>('/candidates/searches'),
+  candidateSearch: (id: number) => request<CandidateSearch>(`/candidates/searches/${id}`),
+  startCandidateSearch: (body: {
+    class: string
+    mode: 'text' | 'examples'
+    prompts?: string[]
+    exemplar_ids?: number[]
+    scope: string
+    max_images: number
+    min_score: number
+  }) =>
+    request<CandidateSearch>('/candidates/searches', json('POST', body)),
+  cancelCandidateSearch: (id: number) => request<CandidateSearch>(`/candidates/searches/${id}/cancel`, { method: 'POST' }),
+  deleteCandidateSearch: (id: number) => request<void>(`/candidates/searches/${id}`, { method: 'DELETE' }),
+  candidates: (id: number, p: { status: string; min_score: number; sort: string; offset: number; limit: number }) => {
+    const q = new URLSearchParams({ status: p.status, min_score: String(p.min_score), sort: p.sort, offset: String(p.offset), limit: String(p.limit) })
+    return request<{ total: number; margin: number; items: Candidate[] }>(`/candidates/searches/${id}/items?${q}`)
+  },
+  decideCandidates: (accept: number[], reject: number[]) =>
+    request<{ added: number; reclassified: number; already_present: number; rejected: number }>('/candidates/decide', json('POST', { accept, reject })),
+  /** a candidate box never changes: the crop is cached for good */
+  candidateCropUrl: (c: Candidate) => `${BASE}/candidates/${c.id}/crop`,
   duplicateGroups: () => request<DuplicateGroup[]>('/images/duplicates/groups'),
   resolveDuplicates: (body: { keep: number[]; delete: number[] }) =>
     request<{ kept: number; deleted: number }>('/images/duplicates/resolve', json('POST', body)),

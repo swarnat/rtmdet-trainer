@@ -325,6 +325,63 @@ class ModelBenchmark(Base):
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
 
+class CandidateSearch(Base):
+    """Search for objects of a (new) class in the existing images with an open-vocabulary detector (OWLv2)."""
+
+    __tablename__ = "candidate_searches"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # the class the candidates are for (accepting one gives a box of this class)
+    class_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    # "text": text queries find the objects; "examples": objects that look like the example boxes
+    mode: Mapped[str] = mapped_column(String(16), nullable=False, default="text", server_default="text")
+    # text queries, e.g. ["excavator", "digger"] (mode "text")
+    prompts: Mapped[list[str]] = mapped_column(JSONType, nullable=False)
+    # example boxes (mode "examples"): [{"image_id", "x1", "y1", "x2", "y2", "class"}]; copied when the search starts,
+    # because annotation ids change whenever an image is saved
+    exemplars: Mapped[list[dict[str, Any]]] = mapped_column(JSONType, nullable=False, default=list)
+    # which images are searched: "all", "labeled" or "unlabeled"
+    scope: Mapped[str] = mapped_column(String(16), nullable=False, default="all")
+    # 0 = all images of the scope
+    max_images: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # candidates below this score are not stored
+    min_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.1)
+    status: Mapped[BatchStatus] = mapped_column(_enum(BatchStatus, "batch_status"), nullable=False, default=BatchStatus.queued)
+    total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    processed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    found: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    model: Mapped[Optional[str]] = mapped_column(String(128))
+    error: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now())
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    candidates: Mapped[list["Candidate"]] = relationship(back_populates="search", cascade="all, delete-orphan", passive_deletes=True)
+
+
+class Candidate(Base):
+    """A box proposed by a candidate search; becomes an annotation when accepted."""
+
+    __tablename__ = "candidates"
+    __table_args__ = (Index("ix_candidates_search_status_score", "search_id", "status", "score"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    search_id: Mapped[int] = mapped_column(ForeignKey("candidate_searches.id", ondelete="CASCADE"), nullable=False, index=True)
+    image_id: Mapped[int] = mapped_column(ForeignKey("images.id", ondelete="CASCADE"), nullable=False, index=True)
+    x1: Mapped[float] = mapped_column(Float, nullable=False)
+    y1: Mapped[float] = mapped_column(Float, nullable=False)
+    x2: Mapped[float] = mapped_column(Float, nullable=False)
+    y2: Mapped[float] = mapped_column(Float, nullable=False)
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+    # the text query that produced the box
+    prompt: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    # "pending", "accepted" or "rejected"
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", server_default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now())
+
+    search: Mapped[CandidateSearch] = relationship(back_populates="candidates")
+
+
 class DetectionClass(Base):
     __tablename__ = "detection_classes"
 

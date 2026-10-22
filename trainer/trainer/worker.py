@@ -23,7 +23,7 @@ from redis import Redis
 from rq import Queue, Worker
 from sqlalchemy import inspect, select
 
-from odcore.db import BatchStatus, ModelBenchmark, ModelVersion, TrainingRun, TrainingStatus, utcnow
+from odcore.db import BatchStatus, CandidateSearch, ModelBenchmark, ModelVersion, TrainingRun, TrainingStatus, utcnow
 from odcore.snapshots import convert_legacy_snapshots, release_snapshot, release_unneeded_snapshots
 
 from .config import get_settings
@@ -93,6 +93,11 @@ class TrainerWorker(Worker):
                     finish_benchmark(int(job.args[0]))
                 except Exception:
                     log.exception("clean-up after benchmark job %s failed", job.id)
+            elif job.func_name == "trainer.worker.run_candidate_search_job" and job.args:
+                try:
+                    finish_candidate_search(int(job.args[0]))
+                except Exception:
+                    log.exception("clean-up after candidate search job %s failed", job.id)
 
 
 def run_benchmark_job(benchmark_id: int) -> None:
@@ -109,6 +114,23 @@ def finish_benchmark(benchmark_id: int) -> None:
         b = session.get(ModelBenchmark, benchmark_id)
         if b is not None and b.status in (BatchStatus.queued, BatchStatus.running):
             b.status, b.error, b.finished_at = BatchStatus.failed, "benchmark process terminated unexpectedly", utcnow()
+            session.commit()
+
+
+def run_candidate_search_job(search_id: int) -> None:
+    session_factory().kw["bind"].dispose(close=False)
+    try:
+        _run_subprocess("candidates", str(search_id))
+    finally:
+        finish_candidate_search(search_id)
+
+
+def finish_candidate_search(search_id: int) -> None:
+    """The search process ended in any way: record a missing failure (killed process)."""
+    with session_factory()() as session:
+        s = session.get(CandidateSearch, search_id)
+        if s is not None and s.status in (BatchStatus.queued, BatchStatus.running):
+            s.status, s.error, s.finished_at = BatchStatus.failed, "search process terminated unexpectedly", utcnow()
             session.commit()
 
 
@@ -138,6 +160,8 @@ def fail_stale_runs() -> None:
     with session_factory()() as session:
         for b in session.execute(select(ModelBenchmark).where(ModelBenchmark.status == BatchStatus.running)).scalars():
             b.status, b.error, b.finished_at = BatchStatus.failed, "worker restarted during the benchmark", utcnow()
+        for s in session.execute(select(CandidateSearch).where(CandidateSearch.status == BatchStatus.running)).scalars():
+            s.status, s.error, s.finished_at = BatchStatus.failed, "worker restarted during the search", utcnow()
         stale = session.execute(select(TrainingRun).where(TrainingRun.status == TrainingStatus.running)).scalars().all()
         for run in stale:
             log.warning("marking training run %s as failed (worker restarted during training)", run.id)

@@ -7,6 +7,7 @@ releases all GPU memory after each job and isolates crashes (e.g. OOM kills).
     python -m trainer.run_job train <run-id>
     python -m trainer.run_job bootstrap [--force]
     python -m trainer.run_job benchmark <benchmark-id>
+    python -m trainer.run_job candidates <search-id>
 """
 from __future__ import annotations
 
@@ -26,12 +27,18 @@ def main() -> int:
     b.add_argument("--base", default="rtmdet-s-coco", help="base model id, e.g. rtmdet-m-coco")
     m = sub.add_parser("benchmark")
     m.add_argument("benchmark_id", type=int)
+    c = sub.add_parser("candidates")
+    c.add_argument("search_id", type=int)
     args = parser.parse_args()
 
     if args.cmd == "benchmark":
         from .benchmark import run_benchmark
 
         run_benchmark(args.benchmark_id)
+    elif args.cmd == "candidates":
+        from .candidates import run_candidate_search
+
+        run_candidate_search(args.search_id)
     elif args.cmd == "train":
         from .train import run_training
 

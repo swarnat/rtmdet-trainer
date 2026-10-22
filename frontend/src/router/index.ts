@@ -12,6 +12,7 @@ export default createRouter({
         { path: 'annotate/:id?', name: 'annotate', component: () => import('@/pages/AnnotationPage.vue') },
         { path: 'review', name: 'review', component: () => import('@/pages/ReviewPage.vue') },
         { path: 'annotation-review', name: 'annotation-review', component: () => import('@/pages/AnnotationReviewPage.vue') },
+        { path: 'candidates', name: 'candidates', component: () => import('@/pages/CandidatesPage.vue') },
         { path: 'duplicates', name: 'duplicates', component: () => import('@/pages/DuplicatesPage.vue') },
         { path: 'training', name: 'training', component: () => import('@/pages/TrainingPage.vue') },
         { path: 'models', name: 'models', component: () => import('@/pages/ModelsPage.vue') },

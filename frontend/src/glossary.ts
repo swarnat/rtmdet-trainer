@@ -31,6 +31,14 @@ export const GLOSSARY = {
   reflected:
     'Spiegelung: Das Objekt ist nur eine Spiegelung (Fenster, Spiegel, Pfütze …). Die Markierung ändert das Training nicht, ' +
     'sie dient dazu, diese Boxen später getrennt zu betrachten.',
+  candidateSearch:
+    'Kandidatensuche: Ein Erkennungsmodell, das Begriffe versteht (OWLv2), sucht in euren vorhandenen Bildern nach Objekten, z. B. „excavator“. ' +
+    'Die Treffer erscheinen als Ausschnitte; ihr übernehmt oder verwerft sie. Übernehmen legt eine Box der gewählten Klasse an – liegt dort schon eine Box ' +
+    'einer anderen Klasse (z. B. „Fahrzeug“), bekommt diese Box stattdessen die neue Klasse. Die Suchbegriffe funktionieren am besten auf Englisch. ' +
+    'Alternativ „Mit Beispielen“: ihr wählt vorhandene Annotationen, und die Suche findet Objekte, die ihnen ähneln – ohne dass ein Begriff nötig ist.',
+  candidateReview:
+    'Geprüft: Ein Bild zählt für die neue Klasse erst als geprüft, wenn es im Annotations-Tab gespeichert wurde. Übernommene Kandidaten ändern daran nichts – ' +
+    'sie sparen nur das Zeichnen. Bilder mit übersehenen Objekten der neuen Klasse werden so nicht versehentlich als Hintergrund trainiert.',
   hnStillDetected:
     'Weiterhin falsch erkannt: Wie viele der bekannten Fehlalarme das neue Modell trotzdem noch macht. Weniger ist besser.',
   hnFpRate:

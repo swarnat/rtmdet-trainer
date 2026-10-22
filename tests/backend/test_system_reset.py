@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from odcore.classes import DEFAULT_CLASSES
-from odcore.db import (Annotation, AnnotationStatus, BatchStatus, DeletedImage, DetectionClass, Image, ImageSuggestion,
+from odcore.db import (Annotation, AnnotationStatus, BatchStatus, Candidate, CandidateSearch, DeletedImage, DetectionClass, Image, ImageSuggestion,
                        ModelStatus, ModelVersion, PredictionBatch, SnapshotImage, TrainingRun, TrainingStatus)
 from odcore.settings_store import get_setting, set_setting
 
@@ -96,6 +96,10 @@ def populate(session_factory, bootstrap: bool = True) -> None:
         s.add(trained)
         s.add(PredictionBatch(status=BatchStatus.completed, model_ref="production", input_width=1536, input_height=864,
                               confidence=0.3))
+        search = CandidateSearch(class_name="dog", prompts=["dog"], status=BatchStatus.completed)
+        s.add(search)
+        s.flush()
+        s.add(Candidate(search_id=search.id, image_id=2, x1=1, y1=1, x2=50, y2=50, score=0.5))
         set_setting(s, "deployment_url", "http://prod:8100")
         s.commit()
 
@@ -127,7 +131,7 @@ def test_reset_deletes_everything_but_settings_and_bootstrap(env):
     body = res.json()
     assert body["production_model"] == "model-0001" and body["bootstrap_queued"] is False and body["warnings"] == []
     with session_factory() as s:
-        for table in (Image, Annotation, ImageSuggestion, DeletedImage, SnapshotImage, TrainingRun, PredictionBatch):
+        for table in (Image, Annotation, ImageSuggestion, DeletedImage, SnapshotImage, TrainingRun, PredictionBatch, CandidateSearch, Candidate):
             assert s.query(table).count() == 0, table.__name__
         assert [(m.version, m.status) for m in s.query(ModelVersion)] == [("model-0001", ModelStatus.production)]
         classes = s.query(DetectionClass).order_by(DetectionClass.sort_order).all()
@@ -148,7 +152,7 @@ def test_reset_without_bootstrap_model_queues_import(env):
         assert s.query(ModelVersion).count() == 0
 
 
-@pytest.mark.parametrize("job", ["training", "batch"])
+@pytest.mark.parametrize("job", ["training", "batch", "candidates"])
 def test_reset_refused_while_jobs_run(env, job):
     client, session_factory, storage, *_ = env
     populate(session_factory)
@@ -156,6 +160,8 @@ def test_reset_refused_while_jobs_run(env, job):
         if job == "training":
             s.add(TrainingRun(status=TrainingStatus.running, base_model_id="rtmdet-s-coco", input_width=1536,
                               input_height=864, epochs=1, batch_size=1))
+        elif job == "candidates":
+            s.add(CandidateSearch(class_name="dog", prompts=["dog"], status=BatchStatus.running))
         else:
             s.add(PredictionBatch(status=BatchStatus.queued, model_ref="production", input_width=1536, input_height=864,
                                   confidence=0.3))

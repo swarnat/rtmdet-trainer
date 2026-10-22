@@ -18,6 +18,7 @@ TRAIN_JOB = "trainer.worker.run_training_job"
 GPU_STATUS_KEY = "trainer:gpu"
 BOOTSTRAP_JOB = "trainer.worker.run_bootstrap_job"
 BENCHMARK_JOB = "trainer.worker.run_benchmark_job"
+CANDIDATE_JOB = "trainer.worker.run_candidate_search_job"
 
 
 @lru_cache
@@ -46,6 +47,13 @@ def enqueue_benchmark(benchmark_id: int) -> str:
     # no timeout, like trainings: RQ measures it with the wall clock, and WSL2 clock jumps killed a running benchmark
     job = get_queue().enqueue(BENCHMARK_JOB, benchmark_id, job_timeout=-1, result_ttl=86400, failure_ttl=7 * 86400,
                               job_id=f"benchmark-{benchmark_id}")
+    return job.id
+
+
+def enqueue_candidate_search(search_id: int) -> str:
+    # no timeout: a search over many images takes as long as it takes (see enqueue_benchmark)
+    job = get_queue().enqueue(CANDIDATE_JOB, search_id, job_timeout=-1, result_ttl=86400, failure_ttl=7 * 86400,
+                              job_id=f"candidate-search-{search_id}")
     return job.id
 
 

@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from odcore.architectures import DEFAULT_BASE_MODEL
 from odcore.classes import DEFAULT_CLASSES
-from odcore.db import (Annotation, BatchStatus, DeletedImage, DetectionClass, Image, ImageErrorMark, ImageSuggestion,
+from odcore.db import (Annotation, BatchStatus, Candidate, CandidateSearch, DeletedImage, DetectionClass, Image, ImageErrorMark, ImageSuggestion,
                        ModelBenchmark, ModelStatus, ModelVersion, PredictionBatch, SnapshotImage, TrainingRun,
                        TrainingStatus, utcnow)
 from odcore.storage import ObjectStorage
@@ -44,6 +44,8 @@ def blocking_jobs(session: Session, backup_dir: Optional[str]) -> list[str]:
         reasons.append(f"{n} batch test(s) queued or running")
     if n := session.scalar(select(func.count(ModelBenchmark.id)).where(ModelBenchmark.status.in_(jobs))):
         reasons.append(f"{n} benchmark(s) queued or running")
+    if n := session.scalar(select(func.count(CandidateSearch.id)).where(CandidateSearch.status.in_(jobs))):
+        reasons.append(f"{n} candidate search(es) queued or running")
     if backup_dir and os.path.isdir(backup_dir):
         from odbackup.core import is_busy
 
@@ -78,6 +80,8 @@ def reset_system(session: Session, storage: ObjectStorage, registry: ModelRegist
 
     # -- database: one transaction ------------------------------------------------------------
     session.execute(delete(SnapshotImage))
+    session.execute(delete(Candidate))  # proposals refer to images and classes that are deleted below
+    session.execute(delete(CandidateSearch))
     session.execute(delete(ImageSuggestion))
     session.execute(delete(ImageErrorMark))
     session.execute(delete(Annotation))
